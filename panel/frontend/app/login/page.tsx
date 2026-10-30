@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { api, setToken } from "@/lib/api";
 import { getBasePath } from "@/lib/basepath";
+import { ThemeToggle } from "@/lib/theme";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -34,11 +35,14 @@ export default function LoginPage() {
 
   return (
     <main className="login-wrap">
+      <div className="login-top">
+        <ThemeToggle />
+      </div>
       <div className="login-card">
         <div className="login-brand">
           <div className="brand-mark lg">SP</div>
           <h1>ورود به پنل</h1>
-          <p>Spoof Tunnel</p>
+          <p>Spoof Tunnel · پنل مدیریت تونل احراز هویت‌شده</p>
         </div>
 
         {error && <div role="alert" className="banner error">{error}</div>}
@@ -88,6 +92,7 @@ export default function LoginPage() {
 
         <p className="login-foot">
           دسترسی از راه دور را فقط روی HTTPS یا از طریق SSH forwarding انجام بده.
+          فایل‌های تنظیمات دانلودی شامل کلید محرمانه (PSK) هستند.
         </p>
       </div>
     </main>

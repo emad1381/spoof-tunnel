@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "@/lib/link";
 import { getBasePath, useBasePath } from "@/lib/basepath";
+import { ThemeToggle } from "@/lib/theme";
 import {
   IconDashboard,
   IconPair,
@@ -72,6 +73,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
         <div className="header-actions">
+          <ThemeToggle />
           <a
             className="header-link-btn"
             href="https://github.com/emad1381/spoof-tunnel"

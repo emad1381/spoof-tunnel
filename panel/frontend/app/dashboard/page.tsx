@@ -177,7 +177,7 @@ export default function Dashboard() {
               </div>
               <div>
                 <div style={{ fontSize: 13, color: "var(--text-muted)" }}>پروتکل رمزنگاری</div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>AES-256-GCM (لایهٔ ۳)</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>AES-256-GCM (لایهٔ ۳)</div>
               </div>
             </div>
 
@@ -216,13 +216,13 @@ export default function Dashboard() {
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, padding: "8px 0" }}>
-            <div style={{ background: "rgba(255,255,255,0.02)", padding: 14, borderRadius: 12, border: "1px solid var(--border-subtle)" }}>
+            <div style={{ background: "var(--card-2)", padding: 14, borderRadius: 12, border: "1px solid var(--border-subtle)" }}>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>↑ ارسال (TX)</div>
-              <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>
+              <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: "var(--text)" }}>
                 {bytes(primaryTelemetry?.tx_bytes)}
               </div>
             </div>
-            <div style={{ background: "rgba(255,255,255,0.02)", padding: 14, borderRadius: 12, border: "1px solid var(--border-subtle)" }}>
+            <div style={{ background: "var(--card-2)", padding: 14, borderRadius: 12, border: "1px solid var(--border-subtle)" }}>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>↓ دریافت (RX)</div>
               <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: "var(--accent-cyan)" }}>
                 {bytes(primaryTelemetry?.rx_bytes)}
@@ -373,7 +373,7 @@ export default function Dashboard() {
           <div className="path-flow" dir="ltr">
             <div className="path-node"><span>TCP / UDP / ICMP</span></div>
             <div className="path-arrow">➔</div>
-            <div className="path-node" style={{ borderColor: "rgba(99, 102, 241, 0.4)", color: "#a5b4fc" }}>
+            <div className="path-node" style={{ borderColor: "rgba(99, 102, 241, 0.4)", color: "var(--accent-hover)" }}>
               <span>Local TUN</span>
             </div>
             <div className="path-arrow">⇄</div>
