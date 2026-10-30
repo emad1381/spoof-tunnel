@@ -5,7 +5,7 @@ import "./globals.css";
 import "./theme.css";
 
 export const metadata: Metadata = {
-  title: "EMAD · Spoof Tunnel",
+  title: "Spoof Tunnel",
   description: "پنل مدیریت تونل اسپوف احراز هویت‌شده با رمزنگاری لایهٔ ۳",
   robots: { index: false, follow: false },
 };

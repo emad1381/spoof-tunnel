@@ -16,29 +16,29 @@ if [[ -f "$src/SHA256SUMS" ]]; then
 fi
 
 install -d -m 700 /etc/spoof-panel
-install -d -m 755 /opt/emad-spoof
+install -d -m 755 /opt/spoof-panel
 
 # Stop running service before replacing binary
-systemctl stop emad-spoof-panel.service 2>/dev/null || true
+systemctl stop spoof-panel.service 2>/dev/null || true
 
 install -m 755 "$src/spoof-l3" /etc/spoof-panel/spoof-l3
-install -m 755 "$src/spoof-panel" /opt/emad-spoof/spoof-panel
+install -m 755 "$src/spoof-panel" /opt/spoof-panel/spoof-panel
 
 # Initial setup if first install
 if [[ ! -f /etc/spoof-panel/panel.db ]]; then
-  /opt/emad-spoof/spoof-panel --setup
+  /opt/spoof-panel/spoof-panel --setup
 fi
 
-cat > /etc/systemd/system/emad-spoof-panel.service <<'UNIT'
+cat > /etc/systemd/system/spoof-panel.service <<'UNIT'
 [Unit]
-Description=EMAD Spoof Tunnel Panel
+Description=Spoof Tunnel Panel
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 Environment=SPOOF_DATA_DIR=/etc/spoof-panel
-ExecStart=/opt/emad-spoof/spoof-panel
+ExecStart=/opt/spoof-panel/spoof-panel
 Restart=on-failure
 RestartSec=3
 KillMode=mixed
@@ -59,13 +59,13 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now emad-spoof-panel.service
+systemctl enable --now spoof-panel.service
 
 server_ip=$(curl -s4 --max-time 2 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
 echo ""
 echo "  ✓ Installation complete and service is running!"
-echo "  Status: systemctl status emad-spoof-panel"
-echo "  Logs:   journalctl -u emad-spoof-panel -f"
+echo "  Status: systemctl status spoof-panel"
+echo "  Logs:   journalctl -u spoof-panel -f"
 if [[ -n "$server_ip" ]]; then
   echo "  Server IP: $server_ip"
 fi

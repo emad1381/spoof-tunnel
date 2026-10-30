@@ -1,4 +1,4 @@
-# Spoof Tunnel · EMAD
+# Spoof Tunnel
 
 ![Panel](docs/images/dashboard.png)
 پنل مدیریت فارسی و هستهٔ مستقل تونل لایهٔ ۳ روی Linux. **TCP، UDP و ICMP** از رابط TUN عبور می‌کنند؛ ترافیک داخلی به UDP محدود نیست.

@@ -51,7 +51,7 @@ func buildPair(p pairRequest) (db.TunnelInstance, db.TunnelInstance, error) {
 		for _, c := range []*db.TunnelInstance{&local, &remote} {
 			c.Engine = "tun"
 			c.Enabled = p.AutoStart
-			c.TunInterface = "emad" + hex.EncodeToString(key[:3])
+			c.TunInterface = "sp" + hex.EncodeToString(key[:3])
 			c.TunMTU = 1280
 			c.PSK = psk
 		}

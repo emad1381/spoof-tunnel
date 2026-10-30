@@ -3,13 +3,13 @@
 ## Service and data
 
 ```sh
-systemctl status emad-spoof-panel
-journalctl -u emad-spoof-panel -n 100 --no-pager
-systemctl restart emad-spoof-panel
-systemctl stop emad-spoof-panel
+systemctl status spoof-panel
+journalctl -u spoof-panel -n 100 --no-pager
+systemctl restart spoof-panel
+systemctl stop spoof-panel
 ```
 
-Data is under `/etc/spoof-panel`: SQLite database, private generated configurations and `spoof-l3`. The panel binary is `/opt/emad-spoof/spoof-panel`. Back up the database while stopped; it contains PSKs and password hashes. Installer upgrades preserve it and stop the service before replacing binaries.
+Data is under `/etc/spoof-panel`: SQLite database, private generated configurations and `spoof-l3`. The panel binary is `/opt/spoof-panel/spoof-panel`. Back up the database while stopped; it contains PSKs and password hashes. Installer upgrades preserve it and stop the service before replacing binaries.
 
 Administrator bootstrap is CLI-only; the HTTP setup endpoint is disabled. The persistent JWT secret survives restarts. Tokens expire after 24 hours. Password changes increment the administrator token version and invalidate previously issued tokens.
 

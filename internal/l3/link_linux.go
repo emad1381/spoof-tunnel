@@ -242,7 +242,7 @@ func Run(ctx context.Context, c Config) error {
 	defer tun.Close()
 
 	var mu sync.Mutex
-	stats := Stats{Event: "emad_stats"}
+	stats := Stats{Event: "spoof_stats"}
 	var challenge [16]byte
 	var challengeSent time.Time
 	var pending bool

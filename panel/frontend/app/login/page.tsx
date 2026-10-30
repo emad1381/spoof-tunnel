@@ -38,7 +38,7 @@ export default function LoginPage() {
         <div className="login-brand">
           <div className="brand-mark lg">SP</div>
           <h1>ورود به پنل</h1>
-          <p>EMAD · Spoof Tunnel</p>
+          <p>Spoof Tunnel</p>
         </div>
 
         {error && <div role="alert" className="banner error">{error}</div>}

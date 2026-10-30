@@ -1,10 +1,10 @@
-EMAD Spoof Tunnel
+Spoof Tunnel
 
 This project derives from ParsaKSH/spoof-tunnel, copyright its contributors,
 licensed under Apache License 2.0. The upstream code and history are retained.
 
 The authenticated TUN engine in internal/l3, spoof-l3 command, paired setup,
-telemetry, installation and documentation are additions to this fork.
+telemetry, installation and documentation are additions to this project.
 
 This project does not contain PenguTunnel binaries, license modifications,
 decompiled proprietary code, credentials or third-party private keys.

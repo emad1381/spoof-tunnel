@@ -3,14 +3,14 @@
 import base64,json,os,pathlib,subprocess,sys,tempfile,time
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-BINARY=pathlib.Path(os.environ.get('EMAD_L3_BINARY',str(ROOT/'spoof-l3')))
+BINARY=pathlib.Path(os.environ.get('SPOOF_L3_BINARY',os.environ.get('EMAD_L3_BINARY',str(ROOT/'spoof-l3'))))
 def run(*args,**kwargs):
     r=subprocess.run(args,text=True,capture_output=True,**kwargs)
     if r.returncode: raise RuntimeError(f"{args}: {r.stdout} {r.stderr}")
     return r
 def main():
     if os.geteuid()!=0:raise SystemExit('run as root')
-    names=[f'emad-a-{os.getpid()}',f'emad-b-{os.getpid()}'];processes=[]
+    names=[f'spoof-a-{os.getpid()}',f'spoof-b-{os.getpid()}'];processes=[]
     report=[]
     try:
         for n in names:run('ip','netns','add',n)
@@ -18,12 +18,12 @@ def main():
         for name,dev,ip,spoof in zip(names,['ema0','emb0'],['192.0.2.1/30','192.0.2.2/30'],['198.51.100.20/32','198.51.100.10/32']):
             run('ip','link','set',dev,'netns',name)
             for args in [('link','set','lo','up'),('address','add',ip,'dev',dev),('link','set',dev,'up'),('route','add',spoof,'dev',dev)]:run('ip','-n',name,*args)
-        with tempfile.TemporaryDirectory(prefix='emad-l3-test-') as tmp:
+        with tempfile.TemporaryDirectory(prefix='spoof-l3-test-') as tmp:
             for send,recv in [('icmp','icmp'),('udp','udp'),('tcp','tcp'),('ipip','ipip'),('experimental','experimental'),('tcp','udp')]:
                 key=base64.b64encode(os.urandom(32)).decode();case=[];logs=[]
                 try:
                     for i,role in enumerate(['local','remote']):
-                        cfg=dict(role=role,local_ip=['192.0.2.1','192.0.2.2'][i],peer_ip=['192.0.2.2','192.0.2.1'][i],spoof_source=['198.51.100.10','198.51.100.20'][i],peer_spoof=['198.51.100.20','198.51.100.10'][i],send=[send,recv][i],receive=[recv,send][i],send_port=[8090,5001][i],receive_port=[5001,8090][i],interface='emadtun0',address=['10.77.0.1/30','10.77.0.2/30'][i],peer_address=['10.77.0.2','10.77.0.1'][i],mtu=1280,psk=key)
+                        cfg=dict(role=role,local_ip=['192.0.2.1','192.0.2.2'][i],peer_ip=['192.0.2.2','192.0.2.1'][i],spoof_source=['198.51.100.10','198.51.100.20'][i],peer_spoof=['198.51.100.20','198.51.100.10'][i],send=[send,recv][i],receive=[recv,send][i],send_port=[8090,5001][i],receive_port=[5001,8090][i],interface='sptun0',address=['10.77.0.1/30','10.77.0.2/30'][i],peer_address=['10.77.0.2','10.77.0.1'][i],mtu=1280,psk=key)
                         p=pathlib.Path(tmp)/f'{role}.json';p.write_text(json.dumps(cfg));os.chmod(p,0o600)
                         log=open(pathlib.Path(tmp)/f'{role}.log','w+');logs.append(log)
                         proc=subprocess.Popen(['ip','netns','exec',names[i],str(BINARY),'--config',str(p)],stdout=log,stderr=log);case.append(proc);processes.append(proc)

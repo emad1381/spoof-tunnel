@@ -1,4 +1,4 @@
-# Spoof Tunnel · EMAD
+# Spoof Tunnel
 
 ![Panel](docs/images/dashboard.png)
 [فارسی](README-fa.md) · [Architecture](docs/ARCHITECTURE.md) · [Operations](docs/OPERATIONS.md) · [Tests](docs/TESTING.md)

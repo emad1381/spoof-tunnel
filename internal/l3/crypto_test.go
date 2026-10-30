@@ -16,7 +16,7 @@ func validConfig() Config {
 		Receive:     "icmp",
 		SendPort:    8090,
 		ReceivePort: 5001,
-		Interface:   "emadtest0",
+		Interface:   "sptest0",
 		Address:     "10.77.0.1/30",
 		PeerAddress: "10.77.0.2",
 		MTU:         1280,

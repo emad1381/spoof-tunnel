@@ -301,7 +301,7 @@ export default function PairPage() {
                 </div>
                 <pre className="code" dir="ltr">{preview(result[role])}</pre>
                 <div className="row">
-                  <button className="btn btn-primary btn-sm" onClick={() => { download(`emad-${role}.json`, result[role]); toast.success(`فایل emad-${role}.json دانلود شد.`); }}>
+                  <button className="btn btn-primary btn-sm" onClick={() => { download(`spoof-${role}.json`, result[role]); toast.success(`فایل spoof-${role}.json دانلود شد.`); }}>
                     دانلود فایل JSON
                   </button>
                   <button className="btn btn-ghost btn-sm" onClick={() => copy(role)}>

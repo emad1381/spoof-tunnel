@@ -461,7 +461,14 @@ func streamLogs(inst *Instance, reader io.Reader) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if pos := strings.Index(line, `{"event":"emad_stats"`); pos >= 0 {
+		if pos := strings.Index(line, `{"event":"spoof_stats"`); pos >= 0 {
+			var stats l3.Stats
+			if json.Unmarshal([]byte(line[pos:]), &stats) == nil {
+				inst.mu.Lock()
+				inst.telemetry = stats
+				inst.mu.Unlock()
+			}
+		} else if pos := strings.Index(line, `{"event":"emad_stats"`); pos >= 0 {
 			var stats l3.Stats
 			if json.Unmarshal([]byte(line[pos:]), &stats) == nil {
 				inst.mu.Lock()

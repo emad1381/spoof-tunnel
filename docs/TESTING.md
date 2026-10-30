@@ -13,6 +13,6 @@ Environment: Linux/WSL, two isolated network namespaces joined by private veth. 
 
 `go test -race ./internal/l3` checks authentication, tampering, replay, reflection, wrong keys, reordering and sequence windows. Backend tests check IPv4/port validation and complementary pair construction. Production frontend build includes TypeScript validation and static export.
 
-Run `scripts/integration_l3.py` as root after building `spoof-l3`, or set `EMAD_L3_BINARY`. It creates uniquely named namespaces and removes them in cleanup without modifying host firewall/routes.
+Run `scripts/integration_l3.py` as root after building `spoof-l3`, or set `SPOOF_L3_BINARY`. It creates uniquely named namespaces and removes them in cleanup without modifying host firewall/routes.
 
-These tests do not prove real provider spoof support, censorship behavior, long-running stability, sustained throughput, independent cryptographic review or every browser/device. A CI reference is supplied at `.github/emad-ci.reference.yml`. Activating it under `.github/workflows/` requires GitHub workflow permission. Existing inherited workflows remain unchanged; local results are distinct from their results.
+These tests do not prove real provider spoof support, censorship behavior, long-running stability, sustained throughput, independent cryptographic review or every browser/device. A CI reference is supplied at `.github/ci.reference.yml`. Activating it under `.github/workflows/` requires GitHub workflow permission. Existing inherited workflows remain unchanged; local results are distinct from their results.

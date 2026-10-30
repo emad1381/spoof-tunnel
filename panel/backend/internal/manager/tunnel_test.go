@@ -22,7 +22,7 @@ func TestRestartWaitsAndConfigIsPrivate(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(dir, "spoof-l3"), script, 0700); err != nil {
 		t.Fatal(err)
 	}
-	c := db.TunnelInstance{Name: "test", Engine: "tun", Mode: "local", LocalIP: "192.0.2.1", RemoteAddr: "192.0.2.2", SpoofIP: "198.51.100.1", PeerSpoofIP: "198.51.100.2", SendTransport: "icmp", RecvTransport: "icmp", RemotePort: 8090, RecvPort: 5001, TunInterface: "emadtest", TunAddress: "10.77.0.1/30", TunPeer: "10.77.0.2", TunMTU: 1280, PSK: base64.StdEncoding.EncodeToString(make([]byte, 32))}
+	c := db.TunnelInstance{Name: "test", Engine: "tun", Mode: "local", LocalIP: "192.0.2.1", RemoteAddr: "192.0.2.2", SpoofIP: "198.51.100.1", PeerSpoofIP: "198.51.100.2", SendTransport: "icmp", RecvTransport: "icmp", RemotePort: 8090, RecvPort: 5001, TunInterface: "sptest", TunAddress: "10.77.0.1/30", TunPeer: "10.77.0.2", TunMTU: 1280, PSK: base64.StdEncoding.EncodeToString(make([]byte, 32))}
 	if err = database.Create(&c).Error; err != nil {
 		t.Fatal(err)
 	}

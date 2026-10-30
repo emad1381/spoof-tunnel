@@ -60,8 +60,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </button>
           <div className="brand-mark">SP</div>
           <div className="brand-copy">
-            <strong>EMAD</strong>
-            <span>Spoof Tunnel</span>
+            <strong>Spoof Tunnel</strong>
           </div>
         </div>
         <div className="header-actions">
@@ -133,7 +132,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
 
       <footer className="app-footer">
-        <span>EMAD · Spoof Tunnel — هستهٔ L3 احراز هویت‌شده</span>
+        <span>Spoof Tunnel — هستهٔ L3 احراز هویت‌شده</span>
         <span>ساخته‌شده روی ParsaKSH/spoof-tunnel · Apache-2.0</span>
       </footer>
     </div>

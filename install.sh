@@ -5,14 +5,14 @@ set -euo pipefail
 for cmd in curl tar sha256sum; do command -v "$cmd" >/dev/null || { echo "Install $cmd first." >&2; exit 1; }; done
 
 printf '\n  ╔══════════════════════════════════════════════════╗\n'
-printf '  ║          EMAD · SPOOF TUNNEL INSTALLER           ║\n'
+printf '  ║             SPOOF TUNNEL INSTALLER               ║\n'
 printf '  ╚══════════════════════════════════════════════════╝\n\n'
 
-version=${EMAD_RELEASE:-emad-v0.2.0}
-[[ "$version" =~ ^emad-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid release version.' >&2; exit 1; }
+version=${SPOOF_RELEASE:-v0.2.0}
+[[ "$version" =~ ^(emad-)?v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid release version.' >&2; exit 1; }
 
 echo "  [1/3] Downloading package $version..."
-work=$(mktemp -d -t emad-install.XXXXXX)
+work=$(mktemp -d -t spoof-install.XXXXXX)
 trap 'rm -rf -- "$work"' EXIT
 
 curl -fsSL --retry 3 --proto '=https' \

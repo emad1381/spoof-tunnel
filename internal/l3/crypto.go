@@ -52,7 +52,7 @@ func NewCodec(psk, role string) (*Codec, error) {
 	if err != nil || len(key) != 32 {
 		return nil, errFrame
 	}
-	a, b := "emad-l3-v1/local-to-remote", "emad-l3-v1/remote-to-local"
+	a, b := "spoof-l3-v1/local-to-remote", "spoof-l3-v1/remote-to-local"
 	if role == "remote" {
 		a, b = b, a
 	}

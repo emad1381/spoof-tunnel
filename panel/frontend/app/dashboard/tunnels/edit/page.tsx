@@ -332,7 +332,7 @@ function EditContent() {
               <section className="panel">
                 <h2>پیکربندی رابط TUN مجازی</h2>
                 <div className="stack">
-                  <Field label="نام رابط سیستم (Network Interface)" hint="۱ تا ۱۵ کاراکتر (مثلاً emadtest0).">
+                  <Field label="نام رابط سیستم (Network Interface)" hint="۱ تا ۱۵ کاراکتر (مثلاً sptest0).">
                     <input className="input mono" dir="ltr" value={String(config.tun_interface ?? "")} disabled={locked} onChange={(e) => set("tun_interface", e.target.value)} />
                   </Field>
                   <div className="grid-2 tight">

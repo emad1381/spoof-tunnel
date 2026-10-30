@@ -43,7 +43,7 @@ Integers are big endian:
 
 The 36-byte header is AEAD additional authenticated data. Plaintext starts with one kind byte: `1` IP data, `2` challenge, `3` response.
 
-Direction keys are HMAC-SHA256(PSK, `emad-l3-v1/local-to-remote` or `emad-l3-v1/remote-to-local`). The session key is HMAC-SHA256(direction key, raw session ID). Nonce is four zero bytes followed by the 64-bit sequence. A fresh 128-bit session ID is generated on process start. No forward secrecy is provided: protect and rotate the PSK.
+Direction keys are HMAC-SHA256(PSK, `spoof-l3-v1/local-to-remote` or `spoof-l3-v1/remote-to-local`). The session key is HMAC-SHA256(direction key, raw session ID). Nonce is four zero bytes followed by the 64-bit sequence. A fresh 128-bit session ID is generated on process start. No forward secrecy is provided: protect and rotate the PSK.
 
 Timestamps older than 120 seconds or more than 30 seconds in the future are rejected. A 1024-sequence replay window is tracked per authenticated session. State persists beyond the accepted timestamp's validity period. At most 64 live receive sessions are admitted; saturation fails closed. Direction separation rejects reflection. Authentication occurs before replay state changes.
 

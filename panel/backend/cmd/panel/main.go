@@ -224,7 +224,7 @@ func main() {
 	addr := fmt.Sprintf("0.0.0.0:%d", listenPort)
 	fullURL := fmt.Sprintf("http://0.0.0.0:%d/%s/", listenPort, webPath)
 	log.Printf("╔══════════════════════════════════════════════════╗")
-	log.Printf("║         EMAD Spoof Tunnel v0.2.0                 ║")
+	log.Printf("║              Spoof Tunnel v0.2.0                 ║")
 	log.Printf("║  %-48s║", fullURL)
 	log.Printf("╚══════════════════════════════════════════════════╝")
 
