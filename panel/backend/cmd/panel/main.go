@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -46,7 +47,10 @@ func main() {
 	_ = os.Chmod(dataDir, 0700)
 
 	dbPath := filepath.Join(dataDir, "panel.db")
-	log.Printf("Database: %s", dbPath)
+	isSetup := *setup || *setupUser != ""
+	if !isSetup {
+		log.Printf("Database: %s", dbPath)
+	}
 
 	// Init database
 	database, err := db.InitDB(dbPath)
@@ -57,7 +61,7 @@ func main() {
 	auth.SetSecret(getOrCreateSetting(database, "jwt_secret", func() string { return auth.GenerateRandomString(64) }))
 	_ = os.Chmod(dbPath, 0600)
 	// Handle setup mode
-	if *setup || *setupUser != "" {
+	if isSetup {
 		runSetup(database, *setupUser, *setupPass, *setupPort)
 		return
 	}
@@ -222,11 +226,12 @@ func main() {
 	}()
 
 	addr := fmt.Sprintf("0.0.0.0:%d", listenPort)
-	fullURL := fmt.Sprintf("http://0.0.0.0:%d/%s/", listenPort, webPath)
-	log.Printf("╔══════════════════════════════════════════════════╗")
-	log.Printf("║              Spoof Tunnel v0.2.0                 ║")
-	log.Printf("║  %-48s║", fullURL)
-	log.Printf("╚══════════════════════════════════════════════════╝")
+	ip := detectServerIP()
+	fullURL := fmt.Sprintf("http://%s:%d/%s/", ip, listenPort, webPath)
+	log.Printf("╔══════════════════════════════════════════════════════════════════════╗")
+	log.Printf("║                         Spoof Tunnel v0.2.0                          ║")
+	log.Printf("║  %-68s║", fullURL)
+	log.Printf("╚══════════════════════════════════════════════════════════════════════╝")
 
 	httpServer := &http.Server{Addr: addr, Handler: srv.Router(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	if err := httpServer.ListenAndServe(); err != nil {
@@ -234,11 +239,42 @@ func main() {
 	}
 }
 
-// getOrCreateSetting reads a setting from DB, or creates it with a default value
+// detectServerIP attempts to determine the external public IPv4 of this host.
+func detectServerIP() string {
+	endpoints := []string{
+		"https://api.ipify.org",
+		"https://ifconfig.me/ip",
+		"https://icanhazip.com",
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	for _, ep := range endpoints {
+		resp, err := client.Get(ep)
+		if err == nil {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
+			resp.Body.Close()
+			candidate := strings.TrimSpace(string(body))
+			if parsed := net.ParseIP(candidate); parsed != nil && parsed.To4() != nil {
+				return candidate
+			}
+		}
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return "YOUR_IP"
+}
+
+// getOrCreateSetting reads a setting from DB, or creates it with a default value.
+// Using Limit(1).Find avoids noisy "record not found" logs on a fresh database.
 func getOrCreateSetting(database *gorm.DB, key string, defaultFn func() string) string {
-	var setting db.Setting
-	if err := database.Where("key = ?", key).First(&setting).Error; err == nil {
-		return setting.Value
+	var settings []db.Setting
+	if err := database.Where("key = ?", key).Limit(1).Find(&settings).Error; err == nil && len(settings) > 0 {
+		return settings[0].Value
 	}
 	value := defaultFn()
 	database.Create(&db.Setting{Key: key, Value: value})
@@ -277,16 +313,19 @@ func runSetup(database *gorm.DB, username, password string, port int) {
 		return auth.GenerateRandomString(10)
 	})
 
+	ip := detectServerIP()
+	panelURL := fmt.Sprintf("http://%s:%d/%s/", ip, port, webPath)
+
 	fmt.Println()
-	fmt.Println("╔══════════════════════════════════════════════════╗")
-	fmt.Println("║       Spoof Panel — Setup Complete               ║")
+	fmt.Println("╔══════════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                    Spoof Panel — Setup Complete                      ║")
+	fmt.Println("╠══════════════════════════════════════════════════════════════════════╣")
+	fmt.Printf("║  Port:     %-58d║\n", port)
+	fmt.Printf("║  Username: %-58s║\n", username)
+	fmt.Printf("║  Password: %-58s║\n", password)
+	fmt.Printf("║  Web Path: %-58s║\n", "/"+webPath)
 	fmt.Println("╠══════════════════════════════════════════════════╣")
-	fmt.Printf("║  Port:     %-38d║\n", port)
-	fmt.Printf("║  Username: %-38s║\n", username)
-	fmt.Printf("║  Password: %-38s║\n", password)
-	fmt.Printf("║  Web Path: %-38s║\n", "/"+webPath)
-	fmt.Println("╠══════════════════════════════════════════════════╣")
-	fmt.Printf("║  URL: http://YOUR_IP:%d/%s/\n", port, webPath)
-	fmt.Println("╚══════════════════════════════════════════════════╝")
+	fmt.Printf("║  URL:      %-58s║\n", panelURL)
+	fmt.Println("╚══════════════════════════════════════════════════════════════════════╝")
 	fmt.Println()
 }
