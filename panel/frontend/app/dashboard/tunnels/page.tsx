@@ -72,13 +72,20 @@ export default function TunnelsPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const base = useBasePath();
   const { toast } = useToast();
+  const lastLoadRef = useRef("");
 
   const load = useCallback(async () => {
     try {
       const [list, dash] = await Promise.all([api.listInstances(), api.dashboard()]);
-      setInstances(list);
       const map: Record<number, Telemetry> = {};
       for (const d of dash.instances ?? []) if (d.telemetry) map[d.id] = d.telemetry;
+      /* Same polling problem as the dashboard: a 4s interval rebuilt
+         new arrays/objects every time and re-rendered the whole list
+         even when nothing changed. Skip identical payloads. */
+      const key = JSON.stringify([list, map]);
+      if (lastLoadRef.current === key) return;
+      lastLoadRef.current = key;
+      setInstances(list);
       setTelemetry(map);
       setError("");
     } catch (e) {

@@ -125,7 +125,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               type="button"
             >
               <span className="nav-icon" aria-hidden="true" style={{ fontSize: 13 }}>{collapsed ? "◀" : "▶"}</span>
-              {!collapsed && <span className="nav-label">جمع کردن منو</span>}
+              {/* Always mounted: the CSS fade (not mount/unmount) animates
+                  this label, so it never wraps or pops during collapse. */}
+              <span className="nav-label">جمع کردن منو</span>
             </button>
             <a
               className="sidebar-item"

@@ -147,6 +147,17 @@ func main() {
 			return false
 		}
 
+		/* Speed fix: the custom file server sent no Cache-Control at
+		   all, so every full page reload re-downloaded every hashed
+		   _next chunk and font. Hashed _next/static files are immutable
+		   by construction, so cache them for a year; HTML stays
+		   no-cache so a new panel binary is picked up immediately. */
+		if strings.HasPrefix(filePath, "_next/static/") {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		} else if ext == ".html" {
+			c.Header("Cache-Control", "no-cache")
+		}
+
 		c.Data(http.StatusOK, contentType, data)
 		return true
 	}

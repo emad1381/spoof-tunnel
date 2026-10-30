@@ -27,7 +27,13 @@ function initialTheme(): ThemeChoice {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<ThemeChoice>(initialTheme);
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    /* The blocking script in layout.tsx already set this before paint;
+       this only keeps React state, the attribute and color-scheme in
+       sync after a user toggle, without ever re-painting light first. */
+    if (document.documentElement.getAttribute("data-theme") !== theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+    }
+    document.documentElement.style.colorScheme = theme;
   }, [theme]);
   const toggle = () => {
     setTheme((prev) => {

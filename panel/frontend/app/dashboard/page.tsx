@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "@/lib/link";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
@@ -75,10 +75,18 @@ export default function Dashboard() {
   const [updated, setUpdated] = useState("");
   const base = useBasePath();
   const { toast } = useToast();
+  const lastPollRef = useRef("");
 
   const refresh = useCallback(async () => {
     try {
       const [d, s] = await Promise.all([api.dashboard(), api.system()]);
+      /* Polling every 3.5s used to re-render the whole page even when
+         nothing changed (new objects every time, plus a new timestamp).
+         Skip the render when the payload is identical; live data still
+         updates the moment tx/rx, status or uptime actually changes. */
+      const key = JSON.stringify([d, s]);
+      if (lastPollRef.current === key) return;
+      lastPollRef.current = key;
       setDash(d);
       setSys(s);
       setError("");

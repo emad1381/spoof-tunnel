@@ -108,8 +108,10 @@
   --shadow-glow-indigo: 0 0 35px -10px rgba(79, 70, 229, 0.3);
 }
 
-/* Follow the OS when the user has not chosen a theme yet. This runs
-   before any JS, so there is no dark/light flash on first paint. */
+/* Follow the OS only when no theme is stored yet AND the blocking
+   theme script in layout.tsx has not run (JS disabled/failed). A stored
+   choice always wins: the script sets data-theme before any content is
+   parsed, so this block can never flash a stored dark theme as light. */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     color-scheme: light;
@@ -165,7 +167,9 @@ button, input, select, textarea { font: inherit; }
 .top-bar {
   position: sticky; top: 0; z-index: 40;
   background: color-mix(in srgb, var(--bg-2) 88%, transparent);
-  backdrop-filter: blur(16px);
+  /* 16px blur repainted the sticky bar on every scroll/reflow frame.
+     8px keeps the glass look at roughly half the compositing cost. */
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
   padding: 12px 28px;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -197,20 +201,33 @@ button, input, select, textarea { font: inherit; }
 .sidebar {
   width: var(--sidebar-width); background: var(--bg-2); border-inline-end: 1px solid var(--border);
   padding: 16px 12px; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0;
-  transition: width 0.25s var(--ease-spring), transform 0.25s var(--ease-spring);
+  /* Short ease-out, not a long spring: width animates layout, so a long
+     spring tail makes the whole page feel laggy while cards reflow. */
+  transition: width 0.2s ease-out, transform 0.2s ease-out;
+  will-change: width;
 }
 .sidebar.collapsed { width: var(--sidebar-collapsed); }
-.sidebar.collapsed .nav-label { display: none; }
+/* Labels stay mounted during collapse/expand. They fade out instantly
+   on collapse and fade in only after the width has mostly finished on
+   expand, so text never wraps, pops or lags behind the sidebar width.
+   Previously labels unmounted/remounted instantly while width animated,
+   which is exactly the laggy text the user saw. */
+.sidebar .nav-label {
+  flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: opacity 0.12s ease-out 0.06s, visibility 0.12s ease-out 0.06s;
+}
+.sidebar.collapsed .nav-label { opacity: 0; visibility: hidden; transition-delay: 0s; }
 .sidebar-nav { display: flex; flex-direction: column; gap: 5px; flex: 1; }
 .sidebar-foot { display: flex; flex-direction: column; gap: 5px; border-top: 1px solid var(--border); padding-top: 12px; }
 .sidebar-item {
   display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-radius: var(--radius-sm);
   color: var(--text-muted); text-decoration: none; font-size: 13.5px; font-weight: 600;
-  transition: color 0.15s, background-color 0.15s, transform 0.12s; cursor: pointer;
-  background: transparent; border: none; text-align: start; width: 100%;
+  /* No transform here: scaling the whole item on press repainted its
+     text every click and fought the width animation. */
+  transition: color 0.15s, background-color 0.15s; cursor: pointer;
+  background: transparent; border: none; text-align: start; width: 100%; overflow: hidden;
 }
 .sidebar-item:hover { color: var(--text); background: var(--bg-hover); }
-.sidebar-item:active { transform: scale(0.97); }
 .sidebar-item.active { color: #fff; background: linear-gradient(135deg, rgba(99, 102, 241, 0.9), rgba(99, 102, 241, 0.65)); box-shadow: 0 10px 24px -12px rgba(99, 102, 241, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.15); }
 .sidebar-item .nav-icon { width: 20px; font-size: 16px; text-align: center; flex-shrink: 0; }
 .main-content { flex: 1; padding: 34px clamp(18px, 3.5vw, 44px) 60px; overflow-y: auto; min-width: 0; }
@@ -221,7 +238,7 @@ button, input, select, textarea { font: inherit; }
 }
 .hamburger-btn { display: none; background: none; border: none; cursor: pointer; padding: 6px; z-index: 40; color: var(--text); }
 .hamburger-icon { display: flex; flex-direction: column; justify-content: center; width: 22px; height: 18px; position: relative; }
-.hamburger-icon span { display: block; height: 2px; width: 100%; background: var(--text); border-radius: 2px; transition: all 0.3s; position: absolute; inset-inline-start: 0; }
+.hamburger-icon span { display: block; height: 2px; width: 100%; background: var(--text); border-radius: 2px; transition: transform 0.2s ease-out, opacity 0.2s ease-out, top 0.2s ease-out; position: absolute; inset-inline-start: 0; }
 .hamburger-icon span:nth-child(1) { top: 0; }
 .hamburger-icon span:nth-child(2) { top: 8px; }
 .hamburger-icon span:nth-child(3) { top: 16px; }
@@ -382,7 +399,7 @@ select.input { appearance: none; cursor: pointer; }
 .row-link { text-decoration: none; font-weight: 600; }
 .row-link:hover { text-decoration: underline; }
 .tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; align-self: flex-start; flex-wrap: wrap; }
-.tab { border: 0; background: transparent; color: var(--text-muted); padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+.tab { border: 0; background: transparent; color: var(--text-muted); padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: color 0.15s, background-color 0.15s; }
 .tab:hover { color: var(--text); }
 .tab.active { background: var(--accent); color: #fff; box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 40%, transparent); }
 .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; animation: fadeIn 0.2s; }
@@ -466,7 +483,9 @@ select.input { appearance: none; cursor: pointer; }
   :root[dir="ltr"] .sidebar { transform: translateX(-100%); }
   .sidebar.mobile-open { transform: translateX(0); }
   .sidebar.collapsed { width: 280px !important; }
-  .sidebar.collapsed .nav-label { display: inline; }
+  /* On mobile the sidebar is a drawer, not a collapsed rail: labels
+     must stay visible even when the collapsed class is set. */
+  .sidebar.collapsed .nav-label { opacity: 1; visibility: visible; }
   .mobile-overlay { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 35; animation: fadeIn 0.2s; }
   .app-footer { flex-direction: column; gap: 8px; text-align: center; }
   .panel, .glass-card { padding: 16px; }
