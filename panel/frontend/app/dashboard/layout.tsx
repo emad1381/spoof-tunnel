@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "@/lib/link";
+import { api } from "@/lib/api";
 import { getBasePath, useBasePath } from "@/lib/basepath";
 import { ThemeToggle } from "@/lib/theme";
 import {
@@ -26,12 +27,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [panelVersion, setPanelVersion] = useState("");
   const basePath = useBasePath();
 
   useEffect(() => {
     if (!localStorage.getItem("token")) {
       window.location.replace(getBasePath() + "/login");
     }
+  }, []);
+
+  // The version comes from the running backend (/api/system), never
+  // from a hard-coded string: the old hard-coded "v0.2.0" kept showing
+  // after the v0.2.2 install, which is exactly this bug.
+  useEffect(() => {
+    let cancelled = false;
+    api.system()
+      .then((sys: { panel_version?: string }) => {
+        if (!cancelled && typeof sys?.panel_version === "string") {
+          setPanelVersion(sys.panel_version);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -69,7 +88,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="brand-mark">SP</div>
           <div className="brand-copy">
             <strong>Spoof Tunnel</strong>
-            <span className="mono" style={{ fontSize: 11, color: "var(--accent-cyan)", opacity: 0.9 }}>v0.2.0</span>
+            {panelVersion && (
+              <span className="mono" style={{ fontSize: 11, color: "var(--accent-cyan)", opacity: 0.9 }}>{panelVersion}</span>
+            )}
           </div>
         </div>
         <div className="header-actions">

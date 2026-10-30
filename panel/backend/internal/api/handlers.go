@@ -152,13 +152,14 @@ func (s *Server) handleSystem(c *gin.Context) {
 	runtime.ReadMemStats(&m)
 
 	c.JSON(http.StatusOK, gin.H{
-		"hostname":   hostname,
-		"os":         runtime.GOOS,
-		"arch":       runtime.GOARCH,
-		"cpus":       runtime.NumCPU(),
-		"goroutines": runtime.NumGoroutine(),
-		"memory_mb":  m.Alloc / 1024 / 1024,
-		"go_version": runtime.Version(),
+		"hostname":      hostname,
+		"os":            runtime.GOOS,
+		"arch":          runtime.GOARCH,
+		"cpus":          runtime.NumCPU(),
+		"goroutines":    runtime.NumGoroutine(),
+		"memory_mb":     m.Alloc / 1024 / 1024,
+		"go_version":    runtime.Version(),
+		"panel_version": s.version,
 	})
 }
 

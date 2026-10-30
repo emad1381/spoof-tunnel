@@ -28,13 +28,27 @@ import (
 //go:embed all:web
 var webFS embed.FS
 
+// panelVersion is the panel release version shown in the CLI banner,
+// in --version output and, via /api/system, in the panel header.
+// It is set at build time with:
+//   go build -ldflags "-X main.panelVersion=vX.Y.Z" ./cmd/panel
+// and defaults to "dev" for a plain local build, so a build that was
+// not stamped with a release can never masquerade as one.
+var panelVersion = "dev"
+
 func main() {
 	port := flag.Int("port", 0, "panel port (0 = auto from DB or random)")
 	setup := flag.Bool("setup", false, "run initial setup with random credentials")
 	setupUser := flag.String("setup-user", "", "setup: admin username")
 	setupPass := flag.String("setup-pass", "", "setup: admin password")
 	setupPort := flag.Int("setup-port", 0, "setup: panel port")
+	showVersion := flag.Bool("version", false, "print panel version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(panelVersion)
+		return
+	}
 
 	// Determine data directory
 	dataDir := "/etc/spoof-panel"
@@ -83,7 +97,7 @@ func main() {
 	mgr := manager.NewManager(database, binaryPath, dataDir)
 
 	// Create API server — API is prefixed with /{webpath}/api
-	srv := api.NewServer(database, mgr, "/"+webPath)
+	srv := api.NewServer(database, mgr, "/"+webPath, panelVersion)
 
 	// Auto-start enabled tunnels
 	var tunnels []db.TunnelInstance
@@ -240,7 +254,7 @@ func main() {
 	ip := detectServerIP()
 	fullURL := fmt.Sprintf("http://%s:%d/%s/", ip, listenPort, webPath)
 	log.Printf("╔══════════════════════════════════════════════════════════════════════╗")
-	log.Printf("║                         Spoof Tunnel v0.2.0                          ║")
+	log.Printf("║  %-68s║", "Spoof Tunnel "+panelVersion)
 	log.Printf("║  %-68s║", fullURL)
 	log.Printf("╚══════════════════════════════════════════════════════════════════════╝")
 

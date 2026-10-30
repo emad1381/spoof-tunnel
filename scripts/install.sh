@@ -82,8 +82,11 @@ fi
 
 server_ip=$(curl -s4 --max-time 3 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
 
+panel_version=$(/opt/spoof-panel/spoof-panel --version 2>/dev/null || echo "unknown")
+
 echo ""
 echo "  ✓ Installation complete"
+echo "  Version : Spoof Panel $panel_version"
 echo "  Service : spoof-panel ($state)"
 echo "  Status  : systemctl status spoof-panel"
 echo "  Logs    : journalctl -u spoof-panel -f"

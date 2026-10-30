@@ -36,7 +36,7 @@ type Dash = {
   instances: Instance[] | null;
 };
 
-type System = { hostname: string; os: string; arch: string; memory_mb: number; cpus: number; go_version?: string };
+type System = { hostname: string; os: string; arch: string; memory_mb: number; cpus: number; go_version?: string; panel_version?: string };
 
 const STATUS_LABEL: Record<string, string> = {
   running: "در حال اجرا",
@@ -401,6 +401,7 @@ export default function Dashboard() {
           <div className="eyebrow">NODE TELEMETRY</div>
           <h2>مشخصات سرور میزبان</h2>
           <dl className="host-info" style={{ marginTop: 8 }}>
+            <dt>نسخهٔ پنل</dt><dd className="mono" dir="ltr">{sys?.panel_version || "—"}</dd>
             <dt>نام هاست</dt><dd className="mono" dir="ltr">{sys?.hostname || "—"}</dd>
             <dt>سیستم‌عامل</dt><dd className="mono" dir="ltr">{sys ? `${sys.os} / ${sys.arch}` : "—"}</dd>
             <dt>پردازنده</dt><dd>{sys?.cpus ? `${fa(sys.cpus)} هسته` : "—"}</dd>

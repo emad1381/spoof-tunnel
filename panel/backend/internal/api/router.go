@@ -22,12 +22,16 @@ type Server struct {
 	tester  *tester.Runner
 	router  *gin.Engine
 	webPath string
+	version string
 	loginMu sync.Mutex
 	logins  map[string][]time.Time
 }
 
-// NewServer creates a new API server
-func NewServer(database *gorm.DB, mgr *manager.Manager, webPath string) *Server {
+// NewServer creates a new API server. version is the panel release
+// version baked in at build time (e.g. v0.2.3); it is the single source
+// of truth the frontend shows, so it can never go stale like a
+// hard-coded string in the frontend did.
+func NewServer(database *gorm.DB, mgr *manager.Manager, webPath string, version string) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	_ = r.SetTrustedProxies(nil)
@@ -47,6 +51,7 @@ func NewServer(database *gorm.DB, mgr *manager.Manager, webPath string) *Server 
 		tester:  tester.NewRunner(),
 		router:  r,
 		webPath: webPath,
+		version: version,
 		logins:  make(map[string][]time.Time),
 	}
 
