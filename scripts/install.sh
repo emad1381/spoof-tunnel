@@ -37,12 +37,8 @@ systemctl stop spoof-panel.service 2>/dev/null || true
 install -m 755 "$src/spoof-l3" /etc/spoof-panel/spoof-l3
 install -m 755 "$src/spoof-panel" /opt/spoof-panel/spoof-panel
 
-# Bootstrap the administrator account on first install only.
-first_run=0
-if [[ ! -f /etc/spoof-panel/panel.db ]]; then
-  first_run=1
-  /opt/spoof-panel/spoof-panel --setup
-fi
+# Display or initialize credentials (always prints login details)
+/opt/spoof-panel/spoof-panel --setup
 
 cat > /etc/systemd/system/spoof-panel.service <<'UNIT'
 [Unit]
@@ -91,8 +87,5 @@ echo "  ✓ Installation complete"
 echo "  Service : spoof-panel ($state)"
 echo "  Status  : systemctl status spoof-panel"
 echo "  Logs    : journalctl -u spoof-panel -f"
-[[ -n "${server_ip:-}" ]] && echo "  Server  : $server_ip"
-if [[ $first_run -eq 0 ]]; then
-  echo "  Note    : existing database preserved; credentials unchanged."
-fi
+echo "  Creds   : cat /etc/spoof-panel/credentials.txt"
 echo ""

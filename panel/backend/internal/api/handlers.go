@@ -645,6 +645,7 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "password update failed"})
 		return
 	}
+	s.db.Save(&db.Setting{Key: "admin_password", Value: req.NewPassword})
 
 	// Generate new token
 	token, _ := auth.GenerateToken(user.ID, user.Username, user.TokenVersion)

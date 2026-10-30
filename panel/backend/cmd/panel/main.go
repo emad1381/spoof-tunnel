@@ -62,7 +62,7 @@ func main() {
 	_ = os.Chmod(dbPath, 0600)
 	// Handle setup mode
 	if isSetup {
-		runSetup(database, *setupUser, *setupPass, *setupPort)
+		runSetup(database, *setupUser, *setupPass, *setupPort, dataDir)
 		return
 	}
 
@@ -281,50 +281,108 @@ func getOrCreateSetting(database *gorm.DB, key string, defaultFn func() string) 
 	return value
 }
 
-func runSetup(database *gorm.DB, username, password string, port int) {
+func runSetup(database *gorm.DB, username, password string, port int, dataDir string) {
 	var count int64
 	database.Model(&db.User{}).Count(&count)
+
+	var user db.User
+	var webPath string
+
 	if count > 0 {
-		log.Fatal("Already initialized; use the panel to change your password")
-	}
-	if password != "" && (len(password) < 12 || len(password) > 72) {
-		log.Fatal("Password must be 12–72 bytes")
-	}
-	if username == "" {
-		username = auth.GenerateRandomString(8)
-	}
-	if password == "" {
-		password = auth.GenerateRandomString(16)
-	}
-	if port == 0 {
-		port = auth.GenerateRandomPort()
-	}
+		database.First(&user)
+		if username != "" && username != user.Username {
+			user.Username = username
+			database.Save(&user)
+		} else {
+			username = user.Username
+		}
 
-	hash, _ := auth.HashPassword(password)
-	database.Create(&db.User{
-		Username:     username,
-		PasswordHash: hash,
-	})
+		// Retrieve or update port
+		var portSetting db.Setting
+		if port == 0 {
+			if err := database.Where("key = ?", "panel_port").First(&portSetting).Error; err == nil {
+				fmt.Sscanf(portSetting.Value, "%d", &port)
+			}
+			if port == 0 {
+				port = auth.GenerateRandomPort()
+				database.Save(&db.Setting{Key: "panel_port", Value: fmt.Sprintf("%d", port)})
+			}
+		} else {
+			database.Save(&db.Setting{Key: "panel_port", Value: fmt.Sprintf("%d", port)})
+		}
 
-	database.Create(&db.Setting{Key: "panel_port", Value: fmt.Sprintf("%d", port)})
+		// Retrieve web path
+		webPath = getOrCreateSetting(database, "web_path", func() string {
+			return auth.GenerateRandomString(10)
+		})
 
-	// Generate web path if not exists
-	webPath := getOrCreateSetting(database, "web_path", func() string {
-		return auth.GenerateRandomString(10)
-	})
+		// Retrieve or update password
+		var passSetting db.Setting
+		if password != "" {
+			if len(password) < 12 || len(password) > 72 {
+				log.Fatal("Password must be 12–72 bytes")
+			}
+			hash, _ := auth.HashPassword(password)
+			user.PasswordHash = hash
+			database.Save(&user)
+			database.Save(&db.Setting{Key: "admin_password", Value: password})
+		} else if err := database.Where("key = ?", "admin_password").First(&passSetting).Error; err == nil && passSetting.Value != "" {
+			password = passSetting.Value
+		} else {
+			// Password was not saved in plaintext in earlier versions.
+			// Set a stable new one so user gets valid working credentials.
+			password = auth.GenerateRandomString(16)
+			hash, _ := auth.HashPassword(password)
+			user.PasswordHash = hash
+			database.Save(&user)
+			database.Save(&db.Setting{Key: "admin_password", Value: password})
+		}
+	} else {
+		// First install
+		if password != "" && (len(password) < 12 || len(password) > 72) {
+			log.Fatal("Password must be 12–72 bytes")
+		}
+		if username == "" {
+			username = auth.GenerateRandomString(8)
+		}
+		if password == "" {
+			password = auth.GenerateRandomString(16)
+		}
+		if port == 0 {
+			port = auth.GenerateRandomPort()
+		}
+
+		hash, _ := auth.HashPassword(password)
+		database.Create(&db.User{
+			Username:     username,
+			PasswordHash: hash,
+		})
+
+		database.Save(&db.Setting{Key: "panel_port", Value: fmt.Sprintf("%d", port)})
+		database.Save(&db.Setting{Key: "admin_password", Value: password})
+
+		webPath = getOrCreateSetting(database, "web_path", func() string {
+			return auth.GenerateRandomString(10)
+		})
+	}
 
 	ip := detectServerIP()
 	panelURL := fmt.Sprintf("http://%s:%d/%s/", ip, port, webPath)
 
+	// Save credentials file for easy access by root
+	credsPath := filepath.Join(dataDir, "credentials.txt")
+	credsContent := fmt.Sprintf("URL: %s\nUsername: %s\nPassword: %s\nPort: %d\nWeb Path: /%s\n", panelURL, username, password, port, webPath)
+	_ = os.WriteFile(credsPath, []byte(credsContent), 0600)
+
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════════════════════════╗")
-	fmt.Println("║                    Spoof Panel — Setup Complete                      ║")
+	fmt.Println("║                    Spoof Panel — Credentials                         ║")
 	fmt.Println("╠══════════════════════════════════════════════════════════════════════╣")
 	fmt.Printf("║  Port:     %-58d║\n", port)
 	fmt.Printf("║  Username: %-58s║\n", username)
 	fmt.Printf("║  Password: %-58s║\n", password)
 	fmt.Printf("║  Web Path: %-58s║\n", "/"+webPath)
-	fmt.Println("╠══════════════════════════════════════════════════╣")
+	fmt.Println("╠══════════════════════════════════════════════════════════════════════╣")
 	fmt.Printf("║  URL:      %-58s║\n", panelURL)
 	fmt.Println("╚══════════════════════════════════════════════════════════════════════╝")
 	fmt.Println()
