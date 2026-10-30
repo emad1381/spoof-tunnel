@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EMAD · Spoof Tunnel — Motion Graphic</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+    :root {
+      --bg: #06070a;
+      --card-bg: rgba(14, 16, 24, 0.85);
+      --border: rgba(99, 102, 241, 0.25);
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.6);
+      --cyan: #58d9c2;
+      --cyan-glow: rgba(88, 217, 194, 0.5);
+      --green: #22c55e;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    /* ─── Viewport Stage (16:9) ─── */
+    .stage-container {
+      position: relative;
+      width: min(96vw, 1400px);
+      aspect-ratio: 16 / 9;
+      background: radial-gradient(1000px 500px at 50% 10%, rgba(99, 102, 241, 0.15), transparent 70%),
+                  radial-gradient(800px 400px at 80% 90%, rgba(88, 217, 194, 0.12), transparent 70%),
+                  #07080d;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.9),
+                  0 0 60px -20px var(--accent-glow);
+      overflow: hidden;
+    }
+
+    /* Ambient cyber grid */
+    .cyber-grid {
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 50px 50px;
+      mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
+      pointer-events: none;
+      opacity: 0.7;
+    }
+
+    /* Canvas for animated particle streams */
+    #particle-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Scene layers */
+    .scene {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px;
+      opacity: 0;
+      visibility: hidden;
+      transform: scale(0.96);
+      transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+                  visibility 0.7s;
+      z-index: 2;
+    }
+
+    .scene.active {
+      opacity: 1;
+      visibility: visible;
+      transform: scale(1);
+    }
+
+    /* ─── SCENE 1: Brand & Kinetic Typography ─── */
+    .brand-hero-logo {
+      width: 110px;
+      height: 110px;
+      border-radius: 28px;
+      background: linear-gradient(135deg, #6366f1, #58d9c2);
+      display: grid;
+      place-items: center;
+      font-size: 44px;
+      font-weight: 900;
+      color: #07080d;
+      box-shadow: 0 0 50px var(--cyan-glow), 0 20px 40px rgba(0, 0, 0, 0.5);
+      margin-bottom: 24px;
+      animation: float 4s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-10px) rotate(2deg); }
+    }
+
+    .title-large {
+      font-size: clamp(34px, 4.5vw, 68px);
+      font-weight: 900;
+      text-align: center;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #ffffff 40%, #c7d2fe 70%, #58d9c2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 16px;
+    }
+
+    .tagline {
+      font-size: clamp(16px, 1.8vw, 24px);
+      color: var(--muted);
+      text-align: center;
+      max-width: 750px;
+      line-height: 1.8;
+      font-weight: 400;
+    }
+
+    .badge-capsule {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 18px;
+      border-radius: 999px;
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      color: #a5b4fc;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      box-shadow: 0 0 20px rgba(99, 102, 241, 0.2);
+    }
+
+    /* ─── SCENE 2: Network Route Animation ─── */
+    .route-visualizer {
+      width: 100%;
+      max-width: 1050px;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .route-nodes-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      padding: 20px 0;
+    }
+
+    .route-pipe {
+      position: absolute;
+      top: 50%;
+      left: 120px;
+      right: 120px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      transform: translateY(-50%);
+      overflow: hidden;
+      border-radius: 4px;
+    }
+
+    .route-pipe-flow {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, var(--cyan), var(--accent), transparent);
+      animation: pipe-flow 1.8s linear infinite;
+    }
+
+    @keyframes pipe-flow {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    .vps-node {
+      position: relative;
+      z-index: 2;
+      background: rgba(18, 20, 32, 0.95);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 220px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(12px);
+    }
+
+    .vps-node.local { border-color: rgba(99, 102, 241, 0.5); }
+    .vps-node.remote { border-color: rgba(88, 217, 194, 0.5); }
+
+    .node-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .node-ip {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--cyan);
+      direction: ltr;
+      text-align: right;
+    }
+
+    .node-sub {
+      font-size: 11.5px;
+      color: var(--muted);
+      direction: ltr;
+      text-align: right;
+    }
+
+    .carriers-carousel {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .carrier-chip {
+      padding: 10px 22px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--muted);
+      transition: all 0.4s;
+    }
+
+    .carrier-chip.active {
+      background: rgba(88, 217, 194, 0.15);
+      border-color: var(--cyan);
+      color: var(--cyan);
+      box-shadow: 0 0 25px var(--cyan-glow);
+      transform: translateY(-3px);
+    }
+
+    .spoof-pool-strip {
+      background: rgba(12, 14, 22, 0.85);
+      border: 1px dashed rgba(88, 217, 194, 0.35);
+      border-radius: 14px;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13.5px;
+    }
+
+    .spoof-pool-strip .pool-tag {
+      font-family: 'JetBrains Mono', monospace;
+      color: #f59e0b;
+      font-weight: 600;
+      direction: ltr;
+    }
+
+    /* ─── SCENE 3: Live Dashboard & Telemetry ─── */
+    .dashboard-mockup {
+      width: 100%;
+      max-width: 1000px;
+      background: var(--card-bg);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(16px);
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .dash-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 16px;
+    }
+
+    .dash-title-group h3 {
+      font-size: 20px;
+      font-weight: 800;
+    }
+
+    .dash-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(34, 197, 94, 0.15);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      color: #4ade80;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 10px #4ade80;
+      animation: pulse-aura 1.5s infinite;
+    }
+
+    @keyframes pulse-aura {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.4); }
+    }
+
+    .metrics-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    .metric-box {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric-box::before {
+      content: "";
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--accent), var(--cyan));
+    }
+
+    .metric-box .label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .metric-box .val {
+      font-size: 28px;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', 'Vazirmatn', monospace;
+      color: #fff;
+    }
+
+    .metric-box .unit {
+      font-size: 12px;
+      color: var(--cyan);
+      margin-right: 4px;
+    }
+
+    /* ─── SCENE 4: 1-Line Setup Terminal ─── */
+    .terminal-window {
+      width: 100%;
+      max-width: 900px;
+      background: #08090f;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.8), 0 0 40px rgba(99, 102, 241, 0.2);
+    }
+
+    .term-bar {
+      background: rgba(255, 255, 255, 0.03);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 12px 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .term-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+    }
+    .term-dot.r { background: #ef4444; }
+    .term-dot.y { background: #f59e0b; }
+    .term-dot.g { background: #22c55e; }
+
+    .term-body {
+      padding: 28px 32px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px;
+      line-height: 2;
+      direction: ltr;
+      text-align: left;
+    }
+
+    .term-cmd {
+      color: #38bdf8;
+      font-weight: 700;
+    }
+
+    .term-output {
+      color: #a1a1aa;
+      margin-top: 14px;
+      font-size: 14px;
+    }
+
+    .cursor {
+      display: inline-block;
+      width: 8px;
+      height: 18px;
+      background: var(--cyan);
+      margin-left: 4px;
+      vertical-align: middle;
+      animation: blink 1s infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* ─── SCENE 5: Outro / GitHub CTA ─── */
+    .cta-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 20px;
+    }
+
+    .github-link-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 32px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(88, 217, 194, 0.2));
+      border: 1px solid var(--cyan);
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', sans-serif;
+      box-shadow: 0 0 35px var(--cyan-glow);
+      text-decoration: none;
+      direction: ltr;
+    }
+
+    /* ─── Player Controls Bar ─── */
+    .player-controls {
+      margin-top: 24px;
+      width: min(96vw, 1400px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 14px 24px;
+      background: rgba(18, 20, 30, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      backdrop-filter: blur(12px);
+    }
+
+    .ctrl-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn-ctrl {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-ctrl:hover {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: var(--accent);
+    }
+
+    .btn-ctrl.active {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .timeline-scrubber {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .progress-bar-wrap {
+      flex: 1;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .progress-bar-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      right: 0;
+      background: linear-gradient(90deg, var(--accent), var(--cyan));
+      border-radius: 3px;
+      width: 0%;
+      transition: width 0.1s linear;
+    }
+
+    .time-readout {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+      direction: ltr;
+    }
+
+    @media (max-width: 900px) {
+      .metrics-row { grid-template-columns: repeat(2, 1fr); }
+      .stage-container { aspect-ratio: 4 / 3; }
+      .route-nodes-bar { flex-direction: column; gap: 20px; }
+      .route-pipe { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 16:9 Motion Graphic Viewport -->
+  <main class="stage-container" id="stage">
+    <div class="cyber-grid"></div>
+    <canvas id="particle-canvas"></canvas>
+
+    <!-- SCENE 1: Introduction & Kinetic Typography -->
+    <section class="scene active" id="scene-1">
+      <div class="badge-capsule">
+        <span>●</span> تونل لایهٔ ۳ احراز هویت‌شده با مبدأ جعلی
+      </div>
+      <div class="brand-hero-logo">SP</div>
+      <h1 class="title-large">EMAD · Spoof Tunnel</h1>
+      <p class="tagline">
+        عبور بدون محدودیت ترافیک TCP، UDP و ICMP با بسته‌بندی رمزنگاری‌شده و چرخش پویای آدرس‌های جعلی روی پنج پروتکل مجزا.
+      </p>
+    </section>
+
+    <!-- SCENE 2: The Core Routing & Spoofing Mechanism -->
+    <section class="scene" id="scene-2">
+      <div class="badge-capsule">
+        <span>⇄</span> معماری مسیر و دور زدن فیلترینگ
+      </div>
+      <h2 style="font-size: 32px; font-weight: 800; margin-bottom: 24px;">چرخش مداوم آدرس‌های جعلی (Multi-Spoof)</h2>
+      
+      <div class="route-visualizer">
+        <div class="route-nodes-bar">
+          <div class="vps-node local">
+            <div class="node-header">
+              <span>سرور ایران (Local)</span>
+              <span style="color: #6366f1;">● مبدأ</span>
+            </div>
+            <div class="node-ip">192.0.2.1</div>
+            <div class="node-sub">رابط: emada1b2c3 (10.77.0.1/30)</div>
+          </div>
+
+          <div class="route-pipe">
+            <div class="route-pipe-flow"></div>
+          </div>
+
+          <div class="vps-node remote">
+            <div class="node-header">
+              <span>سرور خارج (Remote)</span>
+              <span style="color: var(--cyan);">● مقصد</span>
+            </div>
+            <div class="node-ip">198.51.100.20</div>
+            <div class="node-sub">رابط: emada1b2c3 (10.77.0.2/30)</div>
+          </div>
+        </div>
+
+        <!-- Dynamic carrier switcher -->
+        <div class="carriers-carousel">
+          <div class="carrier-chip active" id="chip-icmp">ICMP Echo Request</div>
+          <div class="carrier-chip" id="chip-tcp">TCP خام (PSH/ACK)</div>
+          <div class="carrier-chip" id="chip-udp">UDP Datagram</div>
+          <div class="carrier-chip" id="chip-p4">پروتکل ۴ (IPIP)</div>
+          <div class="carrier-chip" id="chip-p253">پروتکل ۲۵۳ (Experimental)</div>
+        </div>
+
+        <div class="spoof-pool-strip">
+          <span>آدرس مبدأ در حال استفاده (Round-Robin):</span>
+          <span class="pool-tag" id="current-spoof-ip">198.51.100.10</span>
+          <span style="color: var(--cyan); font-size: 12px;">✓ بدون امضای استاندارد TCP Handshake</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCENE 3: Live Panel & Telemetry Simulation -->
+    <section class="scene" id="scene-3">
+      <div class="dashboard-mockup">
+        <div class="dash-top">
+          <div class="dash-title-group">
+            <div class="eyebrow" style="color: var(--cyan); font-size: 11px; letter-spacing: 2px;">LIVE TELEMETRY / 01</div>
+            <h3>کنترل مسیر و سلامت پیوند دوطرفه</h3>
+          </div>
+          <div class="dash-status-pill">
+            <span class="pulse-dot"></span>
+            <span>پاسخ معتبر دریافت شد (احرازشده)</span>
+          </div>
+        </div>
+
+        <div class="metrics-row">
+          <div class="metric-box">
+            <span class="label">ترافیک ارسالی</span>
+            <div class="val" id="metric-tx">0.0 <span class="unit">MB</span></div>
+          </div>
+          <div class="metric-box">
+            <span class="label">ترافیک دریافتی</span>
+            <div class="val" id="metric-rx">0.0 <span class="unit">MB</span></div>
+          </div>
+          <div class="metric-box">
+            <span class="label">تأخیر واقعی (RTT)</span>
+            <div class="val" id="metric-rtt">-- <span class="unit">ms</span></div>
+          </div>
+          <div class="metric-box">
+            <span class="label">بسته‌های بدون افت</span>
+            <div class="val" id="metric-pkts">0 <span class="unit">pkt</span></div>
+          </div>
+        </div>
+
+        <div style="background: rgba(0,0,0,0.3); border-radius: 12px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; font-size: 13px;">
+          <span>رمزنگاری فریم: <strong style="color: var(--cyan);">AES-256-GCM</strong> با کلید‌های جهت‌دار مستقل</span>
+          <span>پنجرهٔ ضدبازپخش: <strong style="color: var(--accent);">۱۰۲۴ بسته</strong></span>
+          <span>ضربان قلب چالش: <strong style="color: #4ade80;">هر ۳ ثانیه</strong></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCENE 4: 1-Line Installer Terminal -->
+    <section class="scene" id="scene-4">
+      <div class="badge-capsule">
+        <span>⚡</span> نصب فوری بدون نیاز به ابزار بیلد
+      </div>
+      <h2 style="font-size: 32px; font-weight: 800; margin-bottom: 24px;">راه‌اندازی تک‌خطی روی ابری لینوکس</h2>
+
+      <div class="terminal-window">
+        <div class="term-bar">
+          <div class="term-dot r"></div>
+          <div class="term-dot y"></div>
+          <div class="term-dot g"></div>
+          <span style="font-size: 12px; color: var(--muted); margin-left: 10px;">root@vps:~#</span>
+        </div>
+        <div class="term-body">
+          <span style="color: #4ade80;">$</span> <span class="term-cmd" id="typed-cmd"></span><span class="cursor" id="cursor"></span>
+          <div class="term-output" id="term-output" style="display: none;">
+            [1/3] Downloading release package emad-v0.2.0...<br>
+            [2/3] Extracting Linux binaries and panel...<br>
+            [3/3] Setting up systemd service with CAP_NET_ADMIN...<br>
+            <span style="color: #4ade80;">✓ Installation Complete! Panel running on http://YOUR_IP:PORT/PREFIX/</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCENE 5: Outro & Call to Action -->
+    <section class="scene" id="scene-5">
+      <div class="brand-hero-logo" style="width: 80px; height: 80px; font-size: 32px; margin-bottom: 16px;">SP</div>
+      <h2 style="font-size: 42px; font-weight: 900; margin-bottom: 12px;">دو سمت، یک اتصال.</h2>
+      <p class="tagline" style="margin-bottom: 30px;">
+        کد منبع باز، مستندات معماری و نسخهٔ آزموده‌شده را در گیت‌هاب دریافت کنید.
+      </p>
+
+      <div class="cta-container">
+        <a class="github-link-pill" href="https://github.com/emad1381/spoof-tunnel" target="_blank">
+          <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          github.com/emad1381/spoof-tunnel
+        </a>
+        <div style="font-size: 13px; color: var(--muted); margin-top: 10px;">
+          Apache License 2.0 · Forked from ParsaKSH/spoof-tunnel
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Player Controls Bar -->
+  <footer class="player-controls">
+    <div class="ctrl-group">
+      <button class="btn-ctrl" id="play-btn">❚❚ توقف</button>
+      <button class="btn-ctrl" id="restart-btn">↺ شروع مجدد</button>
+    </div>
+
+    <!-- Timeline Scrubber -->
+    <div class="timeline-scrubber">
+      <div class="progress-bar-wrap" id="progress-bar">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+      <div class="time-readout" id="time-display">00:00 / 00:25</div>
+    </div>
+
+    <!-- Direct Scene Jump -->
+    <div class="ctrl-group">
+      <button class="btn-ctrl active" data-scene="1">۱. معرفی</button>
+      <button class="btn-ctrl" data-scene="2">۲. مسیر</button>
+      <button class="btn-ctrl" data-scene="3">۳. داشبورد</button>
+      <button class="btn-ctrl" data-scene="4">۴. نصب</button>
+      <button class="btn-ctrl" data-scene="5">۵. پایانی</button>
+    </div>
+  </footer>
+
+  <!-- Animation & Timeline Script -->
+  <script>
+    const TOTAL_DURATION = 25; // seconds
+    let currentTime = 0;
+    let isPlaying = true;
+    let animFrame = null;
+    let lastTimestamp = performance.now();
+
+    const scenes = [
+      { id: 1, start: 0, end: 5 },
+      { id: 2, start: 5, end: 10 },
+      { id: 3, start: 10, end: 16 },
+      { id: 4, start: 16, end: 21 },
+      { id: 5, start: 21, end: 25 },
+    ];
+
+    const playBtn = document.getElementById('play-btn');
+    const restartBtn = document.getElementById('restart-btn');
+    const progressFill = document.getElementById('progress-fill');
+    const progressBar = document.getElementById('progress-bar');
+    const timeDisplay = document.getElementById('time-display');
+    const sceneBtns = document.querySelectorAll('[data-scene]');
+
+    // ── Particle Canvas Animation ──
+    const canvas = document.getElementById('particle-canvas');
+    const ctx = canvas.getContext('2d');
+    let particles = [];
+
+    function resizeCanvas() {
+      canvas.width = canvas.offsetWidth;
+      canvas.height = canvas.offsetHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    for (let i = 0; i < 45; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        vx: (Math.random() - 0.5) * 0.8,
+        vy: (Math.random() - 0.5) * 0.8,
+        size: Math.random() * 2 + 1,
+        alpha: Math.random() * 0.5 + 0.2,
+      });
+    }
+
+    function drawParticles() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#58d9c2';
+      particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < 0) p.x = canvas.width;
+        if (p.x > canvas.width) p.x = 0;
+        if (p.y < 0) p.y = canvas.height;
+        if (p.y > canvas.height) p.y = 0;
+        ctx.globalAlpha = p.alpha;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    // ── Scene Switcher ──
+    function setScene(id) {
+      document.querySelectorAll('.scene').forEach(el => el.classList.remove('active'));
+      const activeEl = document.getElementById(`scene-${id}`);
+      if (activeEl) activeEl.classList.add('active');
+
+      sceneBtns.forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-scene') === String(id));
+      });
+    }
+
+    // ── Scene Micro-animations ──
+    const spoofPool = ["198.51.100.10", "198.51.100.11", "203.0.113.5", "192.0.2.88", "198.51.100.99"];
+    const carrierChips = ["chip-icmp", "chip-tcp", "chip-udp", "chip-p4", "chip-p253"];
+    const installCommand = "curl -fsSL https://raw.githubusercontent.com/emad1381/spoof-tunnel/main/install.sh | bash";
+
+    function updateSceneState(t) {
+      // Scene 2 dynamics: Carousel & IP rotation
+      if (t >= 5 && t < 10) {
+        const subSec = Math.floor((t - 5) * 2);
+        const chipIdx = subSec % carrierChips.length;
+        carrierChips.forEach((id, idx) => {
+          const el = document.getElementById(id);
+          if (el) el.classList.toggle('active', idx === chipIdx);
+        });
+        const ipIdx = Math.floor((t - 5) * 1.5) % spoofPool.length;
+        const spoofEl = document.getElementById('current-spoof-ip');
+        if (spoofEl) spoofEl.innerText = spoofPool[ipIdx];
+      }
+
+      // Scene 3 dynamics: Count-ups
+      if (t >= 10 && t < 16) {
+        const factor = Math.min(1, (t - 10) / 4);
+        const tx = (factor * 3.8).toFixed(1);
+        const rx = (factor * 14.6).toFixed(1);
+        const rtt = Math.round(140 - factor * 118);
+        const pkts = Math.round(factor * 94200);
+
+        document.getElementById('metric-tx').innerHTML = `${tx} <span class="unit">GB</span>`;
+        document.getElementById('metric-rx').innerHTML = `${rx} <span class="unit">GB</span>`;
+        document.getElementById('metric-rtt').innerHTML = `${rtt} <span class="unit">ms</span>`;
+        document.getElementById('metric-pkts').innerHTML = `${pkts.toLocaleString('fa-IR')} <span class="unit">pkt</span>`;
+      }
+
+      // Scene 4 dynamics: Typing effect
+      if (t >= 16 && t < 21) {
+        const typeProgress = Math.min(1, (t - 16) / 2.5);
+        const charCount = Math.floor(typeProgress * installCommand.length);
+        document.getElementById('typed-cmd').innerText = installCommand.substring(0, charCount);
+        const outputEl = document.getElementById('term-output');
+        if (t >= 18.8) {
+          outputEl.style.display = 'block';
+        } else {
+          outputEl.style.display = 'none';
+        }
+      }
+    }
+
+    function formatTime(s) {
+      const mins = Math.floor(s / 60);
+      const secs = Math.floor(s % 60);
+      return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    // ── Master Playback Loop ──
+    function tick(now) {
+      const dt = (now - lastTimestamp) / 1000;
+      lastTimestamp = now;
+
+      if (isPlaying) {
+        currentTime += dt;
+        if (currentTime >= TOTAL_DURATION) {
+          currentTime = 0; // loop
+        }
+
+        // Determine current scene
+        const activeScene = scenes.find(s => currentTime >= s.start && currentTime < s.end) || scenes[0];
+        setScene(activeScene.id);
+
+        // Update progress UI
+        const pct = (currentTime / TOTAL_DURATION) * 100;
+        progressFill.style.width = `${pct}%`;
+        timeDisplay.innerText = `${formatTime(currentTime)} / ${formatTime(TOTAL_DURATION)}`;
+
+        updateSceneState(currentTime);
+      }
+
+      drawParticles();
+      animFrame = requestAnimationFrame(tick);
+    }
+
+    // Controls
+    playBtn.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      playBtn.innerText = isPlaying ? '❚❚ توقف' : '▶ پخش';
+    });
+
+    restartBtn.addEventListener('click', () => {
+      currentTime = 0;
+      isPlaying = true;
+      playBtn.innerText = '❚❚ توقف';
+    });
+
+    progressBar.addEventListener('click', (e) => {
+      const rect = progressBar.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const pct = (clickX / rect.width);
+      // RTL flip
+      const realPct = 1 - pct;
+      currentTime = Math.max(0, Math.min(TOTAL_DURATION, realPct * TOTAL_DURATION));
+    });
+
+    sceneBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.getAttribute('data-scene'));
+        const targetScene = scenes.find(s => s.id === id);
+        if (targetScene) {
+          currentTime = targetScene.start + 0.1;
+          setScene(id);
+        }
+      });
+    });
+
+    // Start
+    lastTimestamp = performance.now();
+    animFrame = requestAnimationFrame(tick);
+  </script>
+</body>
+</html>
