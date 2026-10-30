@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { getBasePath, useBasePath } from "@/lib/basepath";
 import { useToast } from "@/lib/toast";
+import { IconPlay, IconStop, IconRestart, IconDownload } from "@/lib/icons";
 
 const CARRIERS = [
   { value: "icmp", label: "ICMP Echo (پیشنهادی)" },
@@ -223,11 +224,20 @@ function EditContent() {
           </button>
           {running ? (
             <>
-              <button className="btn btn-ghost" onClick={() => control("stop")}>توقف</button>
-              <button className="btn btn-ghost" onClick={() => control("restart")}>راه‌اندازی مجدد</button>
+              <button className="btn btn-ghost" onClick={() => control("stop")}>
+                <IconStop size={12} />
+                <span>توقف</span>
+              </button>
+              <button className="btn btn-ghost" onClick={() => control("restart")}>
+                <IconRestart size={12} />
+                <span>راه‌اندازی مجدد</span>
+              </button>
             </>
           ) : (
-            <button className="btn btn-primary" onClick={() => control("start")}>راه‌اندازی اتصال</button>
+            <button className="btn btn-primary" onClick={() => control("start")}>
+              <IconPlay size={12} />
+              <span>راه‌اندازی اتصال</span>
+            </button>
           )}
         </div>
       </div>
@@ -238,9 +248,9 @@ function EditContent() {
 
       <div className="tabs" role="tablist">
         {([
-          ["config", "⚙ تنظیمات اتصال"],
-          ["ips", "📋 استخر IPهای اسپوف"],
-          ["logs", "📝 لاگ زندهٔ تونل"],
+          ["config", "تنظیمات اتصال"],
+          ["ips", "استخر IPهای اسپوف"],
+          ["logs", "لاگ زندهٔ تونل"],
         ] as const).map(([k, label]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={`tab ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>
             {label}
@@ -355,7 +365,10 @@ function EditContent() {
           </div>
 
           <div className="row end sticky-actions">
-            <button className="btn btn-ghost" onClick={download}>دانلود فایل کانفیگ JSON</button>
+            <button className="btn btn-ghost" onClick={download}>
+              <IconDownload size={14} />
+              <span>دانلود فایل کانفیگ JSON</span>
+            </button>
             <button className="btn btn-primary" disabled={saving || locked} onClick={save}>
               {saving ? "در حال ذخیره‌سازی…" : "ذخیرهٔ تنظیمات اتصال"}
             </button>

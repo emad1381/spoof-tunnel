@@ -4,6 +4,7 @@ import Link from "@/lib/link";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
 import { useToast } from "@/lib/toast";
+import { IconDownload, IconCopy, IconCheck, IconPair } from "@/lib/icons";
 
 type End = Record<string, string | number | boolean>;
 
@@ -302,10 +303,21 @@ export default function PairPage() {
                 <pre className="code" dir="ltr">{preview(result[role])}</pre>
                 <div className="row">
                   <button className="btn btn-primary btn-sm" onClick={() => { download(`spoof-${role}.json`, result[role]); toast.success(`فایل spoof-${role}.json دانلود شد.`); }}>
-                    دانلود فایل JSON
+                    <IconDownload size={14} />
+                    <span>دانلود فایل JSON</span>
                   </button>
                   <button className="btn btn-ghost btn-sm" onClick={() => copy(role)}>
-                    {copied === role ? "کپی شد ✓" : "کپی تنظیمات"}
+                    {copied === role ? (
+                      <>
+                        <IconCheck size={14} />
+                        <span>کپی شد</span>
+                      </>
+                    ) : (
+                      <>
+                        <IconCopy size={14} />
+                        <span>کپی تنظیمات</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

@@ -3,13 +3,22 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "@/lib/link";
 import { getBasePath, useBasePath } from "@/lib/basepath";
+import {
+  IconDashboard,
+  IconPair,
+  IconTunnels,
+  IconTester,
+  IconSettings,
+  IconLogout,
+  IconShield,
+} from "@/lib/icons";
 
 const NAV_ITEMS = [
-  { path: "/dashboard", icon: "◈", label: "نمای کلی", exact: true },
-  { path: "/dashboard/pair", icon: "⇄", label: "ساخت اتصال" },
-  { path: "/dashboard/tunnels", icon: "🔗", label: "اتصال‌ها" },
-  { path: "/dashboard/tester", icon: "🔬", label: "آزمون اسپوف" },
-  { path: "/dashboard/settings", icon: "⚙", label: "تنظیمات" },
+  { path: "/dashboard", icon: IconDashboard, label: "نمای کلی", exact: true },
+  { path: "/dashboard/pair", icon: IconPair, label: "ساخت اتصال" },
+  { path: "/dashboard/tunnels", icon: IconTunnels, label: "اتصال‌ها" },
+  { path: "/dashboard/tester", icon: IconTester, label: "آزمون اسپوف" },
+  { path: "/dashboard/settings", icon: IconSettings, label: "تنظیمات" },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -18,8 +27,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [mobileOpen, setMobileOpen] = useState(false);
   const basePath = useBasePath();
 
-  // Auth guard. getBasePath() is called inside the effect on purpose: the
-  // hook value is still "" on the first paint and would drop the web prefix.
   useEffect(() => {
     if (!localStorage.getItem("token")) {
       window.location.replace(getBasePath() + "/login");
@@ -61,6 +68,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="brand-mark">SP</div>
           <div className="brand-copy">
             <strong>Spoof Tunnel</strong>
+            <span className="mono" style={{ fontSize: 11, color: "var(--accent-cyan)", opacity: 0.9 }}>v0.2.0</span>
           </div>
         </div>
         <div className="header-actions">
@@ -76,7 +84,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <span className="hide-mobile">GitHub</span>
           </a>
           <button className="header-link-btn" onClick={logout} title="خروج از حساب">
-            <span aria-hidden="true">⎋</span>
+            <IconLogout size={15} />
             <span className="hide-mobile">خروج</span>
           </button>
         </div>
@@ -92,6 +100,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               const active = item.exact
                 ? pathname === href || pathname === item.path
                 : pathname === href || pathname?.startsWith(href + "/") || pathname?.startsWith(item.path + "/");
+              const Icon = item.icon;
               return (
                 <Link
                   key={item.path}
@@ -100,7 +109,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   onClick={() => setMobileOpen(false)}
                   aria-current={active ? "page" : undefined}
                 >
-                  <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+                  <span className="nav-icon" aria-hidden="true"><Icon size={18} /></span>
                   <span className="nav-label">{item.label}</span>
                 </Link>
               );
@@ -113,8 +122,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               onClick={() => setCollapsed(!collapsed)}
               type="button"
             >
-              <span className="nav-icon" aria-hidden="true">{collapsed ? "‹" : "›"}</span>
-              {!collapsed && <span className="nav-label">جمع کردن</span>}
+              <span className="nav-icon" aria-hidden="true" style={{ fontSize: 13 }}>{collapsed ? "◀" : "▶"}</span>
+              {!collapsed && <span className="nav-label">جمع کردن منو</span>}
             </button>
             <a
               className="sidebar-item"
@@ -122,8 +131,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               target="_blank"
               rel="noopener noreferrer"
             >
-              <span className="nav-icon" aria-hidden="true">؟</span>
-              <span className="nav-label">راهنما</span>
+              <span className="nav-icon" aria-hidden="true"><IconShield size={16} /></span>
+              <span className="nav-label">مستندات و امنیت</span>
             </a>
           </div>
         </aside>
@@ -132,8 +141,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
 
       <footer className="app-footer">
-        <span>Spoof Tunnel — هستهٔ L3 احراز هویت‌شده</span>
-        <span>ساخته‌شده روی ParsaKSH/spoof-tunnel · Apache-2.0</span>
+        <span>Spoof Tunnel — هستهٔ L3 احراز هویت‌شده با رمزنگاری سرتاسری</span>
+        <span>Apache-2.0 · منبع‌باز در گیت‌هاب</span>
       </footer>
     </div>
   );

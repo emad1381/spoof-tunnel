@@ -2,6 +2,15 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useToast } from "@/lib/toast";
+import {
+  IconTester,
+  IconPlay,
+  IconStop,
+  IconUpload,
+  IconCopy,
+  IconCheck,
+  IconDownload,
+} from "@/lib/icons";
 
 type TesterResult = {
   ip: string;
@@ -183,7 +192,7 @@ export default function TesterPage() {
           className={`tab ${tab === "receiver" ? "active" : ""}`}
           onClick={() => { setTab("receiver"); setError(""); }}
         >
-          📡 گیرنده (Receiver)
+          گیرندهٔ آزمون (Receiver)
         </button>
         <button
           role="tab"
@@ -191,7 +200,7 @@ export default function TesterPage() {
           className={`tab ${tab === "sender" ? "active" : ""}`}
           onClick={() => { setTab("sender"); setError(""); }}
         >
-          📤 فرستنده (Sender)
+          فرستندهٔ آزمون (Sender)
         </button>
       </div>
 
@@ -324,7 +333,8 @@ export default function TesterPage() {
                     className="btn btn-ghost btn-sm"
                     onClick={() => fileInputRef.current?.click()}
                   >
-                    بارگذاری فایل متنی
+                    <IconUpload size={13} />
+                    <span>بارگذاری فایل متنی</span>
                   </button>
                   <input
                     type="file"
@@ -370,11 +380,13 @@ export default function TesterPage() {
                   onClick={handleStart}
                   disabled={loading}
                 >
-                  {loading ? "در حال آماده‌سازی…" : `شروع آزمون ${tab === "receiver" ? "گیرنده" : "فرستنده"}`}
+                  <IconPlay size={13} />
+                  <span>{loading ? "در حال آماده‌سازی…" : `شروع آزمون ${tab === "receiver" ? "گیرنده" : "فرستنده"}`}</span>
                 </button>
               ) : (
                 <button className="btn btn-danger btn-block" onClick={handleStop}>
-                  توقف آزمون
+                  <IconStop size={13} />
+                  <span>توقف آزمون</span>
                 </button>
               )}
             </div>
@@ -440,10 +452,12 @@ export default function TesterPage() {
 
               <div className="row">
                 <button className="btn btn-ghost btn-sm" onClick={handleCopyPassedIPs}>
-                  {copied ? "کپی شد ✓" : "کپی IPهای تأییدشده"}
+                  {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                  <span>{copied ? "کپی شد" : "کپی IPهای تأییدشده"}</span>
                 </button>
                 <button className="btn btn-ghost btn-sm" onClick={handleDownloadPassedIPs}>
-                  دانلود spoof-ips.txt
+                  <IconDownload size={13} />
+                  <span>دانلود spoof-ips.txt</span>
                 </button>
               </div>
 
@@ -480,7 +494,7 @@ export default function TesterPage() {
 
           {results.length === 0 && state.status === "idle" && (
             <div className="empty">
-              <div className="empty-icon">🔬</div>
+              <div className="empty-icon"><IconTester size={44} /></div>
               <h3>آزمونی در جریان نیست</h3>
               <p>
                 برای شروع، ابتدا گیرنده را در سرور خارج روشن کن و سپس فرستنده را در ایران اجرا کن.

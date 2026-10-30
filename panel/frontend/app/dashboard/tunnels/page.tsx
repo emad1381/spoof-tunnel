@@ -4,6 +4,15 @@ import Link from "@/lib/link";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
 import { useToast } from "@/lib/toast";
+import {
+  IconPlay,
+  IconStop,
+  IconRestart,
+  IconSettings,
+  IconTrash,
+  IconUpload,
+  IconTunnels,
+} from "@/lib/icons";
 
 type Instance = {
   id: number;
@@ -156,7 +165,8 @@ export default function TunnelsPage() {
         </div>
         <div className="row">
           <button className="btn btn-ghost" onClick={() => fileRef.current?.click()}>
-            ورود فایل JSON
+            <IconUpload size={15} />
+            <span>ورود فایل JSON</span>
           </button>
           <input
             ref={fileRef}
@@ -184,7 +194,7 @@ export default function TunnelsPage() {
 
       {!loading && instances.length === 0 && (
         <div className="empty panel">
-          <div className="empty-icon">🔗</div>
+          <div className="empty-icon"><IconTunnels size={42} /></div>
           <h3>هنوز اتصالی ثبت نشده است</h3>
           <p>با «ساخت اتصال جدید» تنظیمات هر دو سمت را به راحتی تولید کن یا فایل JSON موجود را وارد کن.</p>
           <Link className="btn btn-primary" href={base + "/dashboard/pair"}>ساخت اتصال دوطرفه</Link>
@@ -234,16 +244,28 @@ export default function TunnelsPage() {
                 <div className="row">
                   {i.status === "running" ? (
                     <>
-                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "stop", i.name)}>توقف</button>
-                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "restart", i.name)}>راه‌اندازی مجدد</button>
+                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "stop", i.name)}>
+                        <IconStop size={12} />
+                        <span>توقف</span>
+                      </button>
+                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "restart", i.name)}>
+                        <IconRestart size={12} />
+                        <span>راه‌اندازی مجدد</span>
+                      </button>
                     </>
                   ) : (
                     <button className="btn btn-primary btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "start", i.name)}>
-                      {busy === i.id ? "…" : "راه‌اندازی"}
+                      <IconPlay size={12} />
+                      <span>{busy === i.id ? "…" : "راه‌اندازی"}</span>
                     </button>
                   )}
-                  <Link className="btn btn-ghost btn-sm" href={`${base}/dashboard/tunnels/edit?id=${i.id}`}>تنظیمات</Link>
-                  <button className="btn btn-ghost btn-sm danger-text" onClick={() => setToDelete(i)} aria-label={`حذف ${i.name}`}>حذف</button>
+                  <Link className="btn btn-ghost btn-sm" href={`${base}/dashboard/tunnels/edit?id=${i.id}`}>
+                    <IconSettings size={13} />
+                    <span>تنظیمات</span>
+                  </Link>
+                  <button className="btn btn-ghost btn-sm danger-text" onClick={() => setToDelete(i)} aria-label={`حذف ${i.name}`}>
+                    <IconTrash size={13} />
+                  </button>
                 </div>
               </footer>
             </article>

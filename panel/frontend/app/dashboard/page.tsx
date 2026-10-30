@@ -4,6 +4,7 @@ import Link from "@/lib/link";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
 import { useToast } from "@/lib/toast";
+import { IconRestart, IconPlay, IconStop, IconSettings, IconTunnels } from "@/lib/icons";
 
 type Telemetry = {
   peer_connected: boolean;
@@ -133,7 +134,8 @@ export default function Dashboard() {
         </div>
         <div className="row">
           <button className="btn btn-ghost" onClick={() => { refresh(); toast.info("اطلاعات به‌روزرسانی شد."); }}>
-            ↺ به‌روزرسانی
+            <IconRestart size={14} />
+            <span>به‌روزرسانی</span>
           </button>
           <Link className="btn btn-primary" href={base + "/dashboard/pair"}>
             + ساخت اتصال دوطرفه
@@ -270,7 +272,7 @@ export default function Dashboard() {
 
         {dash && instances.length === 0 && (
           <div className="empty">
-            <div className="empty-icon">↔</div>
+            <div className="empty-icon"><IconTunnels size={42} /></div>
             <h3>هنوز اتصالی پیکربندی نشده است</h3>
             <p>مشخصات دو سرور را وارد کن تا تنظیمات مکمل و کلید رمزنگاری تولید شوند.</p>
             <div className="row center" style={{ marginTop: 8 }}>
@@ -334,10 +336,23 @@ export default function Dashboard() {
                             disabled={busy === i.id || i.status === "stopping" || i.status === "starting"}
                             onClick={() => toggle(i)}
                           >
-                            {busy === i.id ? "…" : i.status === "running" ? "توقف" : "راه‌اندازی"}
+                            {busy === i.id ? (
+                              "…"
+                            ) : i.status === "running" ? (
+                              <>
+                                <IconStop size={12} />
+                                <span>توقف</span>
+                              </>
+                            ) : (
+                              <>
+                                <IconPlay size={12} />
+                                <span>راه‌اندازی</span>
+                              </>
+                            )}
                           </button>
                           <Link className="btn btn-ghost btn-sm" href={base + `/dashboard/tunnels/edit?id=${i.id}`}>
-                            تنظیمات
+                            <IconSettings size={13} />
+                            <span>تنظیمات</span>
                           </Link>
                         </div>
                       </td>
