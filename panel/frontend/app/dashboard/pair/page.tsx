@@ -3,15 +3,16 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "@/lib/link";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
+import { useToast } from "@/lib/toast";
 
 type End = Record<string, string | number | boolean>;
 
 const CARRIERS = [
-  { value: "icmp", label: "ICMP" },
-  { value: "tcp", label: "TCP خام" },
-  { value: "udp", label: "UDP" },
-  { value: "ipip", label: "پروتکل ۴" },
-  { value: "experimental", label: "پروتکل ۲۵۳" },
+  { value: "icmp", label: "ICMP Echo", desc: "پیشنهادی برای عبور پایدار" },
+  { value: "tcp", label: "TCP خام", desc: "بدون هندشیک، همراه با PSH/ACK" },
+  { value: "udp", label: "UDP Datagram", desc: "مناسب سرویس‌های بی‌درنگ" },
+  { value: "ipip", label: "پروتکل ۴ (IPIP)", desc: "فریم رمزشده داخل هدر IP" },
+  { value: "experimental", label: "پروتکل ۲۵۳", desc: "آزمایشی و ناشناخته برای DPI" },
 ];
 
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
@@ -36,11 +37,12 @@ function download(name: string, config: End) {
 
 export default function PairPage() {
   const base = useBasePath();
+  const { toast } = useToast();
   const [form, setForm] = useState({
     engine: "tun",
     auto_start: true,
     tun_subnet: "10.77.0.0/30",
-    name: "تونل من",
+    name: "تونل اصلی",
     local_ip: "",
     remote_ip: "",
     local_spoof: "",
@@ -77,11 +79,12 @@ export default function PairPage() {
     const list: string[] = [];
     if (!IPV4.test(form.local_ip)) list.push("IP واقعی سرور ایران معتبر نیست.");
     if (!IPV4.test(form.remote_ip)) list.push("IP واقعی سرور خارج معتبر نیست.");
+    if (form.local_ip === form.remote_ip && form.local_ip !== "") list.push("آدرس‌های واقعی دو سرور باید متمایز باشند.");
     if (!IPV4.test(form.local_spoof)) list.push("مبدأ جعلی ایران معتبر نیست.");
     if (!IPV4.test(form.remote_spoof)) list.push("مبدأ جعلی خارج معتبر نیست.");
-    if (form.local_spoof === form.remote_spoof) list.push("مبدأهای جعلی دو طرف باید متفاوت باشند.");
+    if (form.local_spoof === form.remote_spoof && form.local_spoof !== "") list.push("مبدأهای جعلی دو طرف باید متفاوت باشند.");
     if (!/^\d{1,3}(\.\d{1,3}){3}\/30$/.test(form.tun_subnet)) list.push("شبکهٔ داخلی باید IPv4 با prefix یعنی /30 باشد.");
-    if (!form.name.trim()) list.push("نام اتصال لازم است.");
+    if (!form.name.trim()) list.push("نام اتصال الزامی است.");
     return list;
   }, [form]);
 
@@ -89,14 +92,19 @@ export default function PairPage() {
     e.preventDefault();
     if (problems.length) {
       setError(problems[0]);
+      toast.error(problems[0]);
       return;
     }
     setBusy(true);
     setError("");
     try {
-      setResult(await api.pair(form));
+      const res = await api.pair(form);
+      setResult(res);
+      toast.success("تنظیمات هماهنگ دوطرفه با موفقیت تولید شد.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "ساخت تنظیمات ناموفق بود");
+      const msg = err instanceof Error ? err.message : "ساخت تنظیمات ناموفق بود";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -107,159 +115,206 @@ export default function PairPage() {
     try {
       await navigator.clipboard.writeText(JSON.stringify(result[role], null, 2));
       setCopied(role);
-      setTimeout(() => setCopied(""), 1500);
+      toast.success(`تنظیمات سمت ${role === "local" ? "ایران" : "خارج"} در کلیپ‌بورد کپی شد.`);
+      setTimeout(() => setCopied(""), 1800);
     } catch {
-      setError("کپی در مرورگر ممکن نشد؛ از دانلود استفاده کن.");
+      setError("کپی در مرورگر ممکن نشد؛ از دکمهٔ دانلود استفاده کن.");
     }
   };
 
-  const preview = (c: End) => JSON.stringify({ ...c, psk: "•••••••• (در فایل دانلودی)" }, null, 2);
+  const preview = (c: End) => JSON.stringify({ ...c, psk: "•••••••• (کلید اختصاصی ۳۲ بایتی در فایل دانلودی)" }, null, 2);
 
   return (
     <div className="page">
+      {/* Header */}
       <div className="page-head">
         <div>
           <div className="eyebrow">CONNECTION BUILDER / 02</div>
           <h1>دو سمت، یک اتصال.</h1>
           <p className="page-intro">
-            تنظیمات مکمل ایران و خارج را یک‌جا بساز. حامل رفت یک سمت، حامل برگشت سمت دیگر می‌شود؛
-            پورت‌های دریافت و کلید مشترک خودکار هماهنگ می‌شوند.
+            تنظیمات مکمل ایران و خارج را یک‌جا تولید کن. کلید رمزنگاری مشترک، جهت پروتکل‌ها و آدرس‌های ساب‌نت
+            به صورت آینه‌ای و تضمین‌شده هماهنگ می‌شوند.
           </p>
         </div>
       </div>
 
       <div className="builder">
+        {/* Form Panel */}
         <form className="panel" onSubmit={submit}>
-          <h2>مسیر اتصال</h2>
+          <div className="section-head">
+            <h2>مشخصات اتصال دوطرفه</h2>
+            <span className="pill ok">موتور پیشرفتهٔ L3 TUN</span>
+          </div>
 
+          {/* Endpoints Grid */}
           <div className="grid-2">
             <label className="field">
               <span>IP واقعی سرور ایران</span>
               <input className="input mono" dir="ltr" inputMode="decimal" placeholder="203.0.113.10"
                 value={form.local_ip} onChange={(e) => set("local_ip", e.target.value.trim())} required />
+              <small className="hint">مقصد بسته‌های ارسالی از خارج.</small>
             </label>
             <label className="field">
               <span>IP واقعی سرور خارج</span>
               <input className="input mono" dir="ltr" inputMode="decimal" placeholder="198.51.100.20"
                 value={form.remote_ip} onChange={(e) => set("remote_ip", e.target.value.trim())} required />
+              <small className="hint">مقصد بسته‌های ارسالی از ایران.</small>
             </label>
             <label className="field">
               <span>مبدأ جعلی سمت ایران</span>
               <input className="input mono" dir="ltr" inputMode="decimal" placeholder="192.0.2.11"
                 value={form.local_spoof} onChange={(e) => set("local_spoof", e.target.value.trim())} required />
+              <small className="hint">IP که در هدر بسته به عنوان فرستنده جعل می‌شود.</small>
             </label>
             <label className="field">
               <span>مبدأ جعلی سمت خارج</span>
               <input className="input mono" dir="ltr" inputMode="decimal" placeholder="192.0.2.22"
                 value={form.remote_spoof} onChange={(e) => set("remote_spoof", e.target.value.trim())} required />
+              <small className="hint">سرور ایران انتظار دارد بسته‌ها از این IP برسند.</small>
             </label>
           </div>
 
+          {/* Subnet and Name */}
           <div className="grid-2">
             <label className="field">
               <span>نام اتصال</span>
               <input className="input" maxLength={100} value={form.name} onChange={(e) => set("name", e.target.value)} required />
             </label>
             <label className="field">
-              <span>شبکهٔ داخلی TUN</span>
+              <span>شبکهٔ داخلی TUN (/30)</span>
               <input className="input mono" dir="ltr" value={form.tun_subnet} onChange={(e) => set("tun_subnet", e.target.value)} required />
-              <small className="hint">هر اتصال باید /30 یکتا داشته باشد؛ مقدار پیشنهادی از اتصال‌های موجود پرهیز می‌کند.</small>
+              <small className="hint">پیشنهاد خودکار ساب‌نت خالی برای جلوگیری از تداخل رابط‌ها.</small>
             </label>
           </div>
 
+          {/* Carriers Selection */}
           <div className="grid-2">
-            <label className="field">
+            <div className="field">
               <span>حامل رفت (ایران → خارج)</span>
               <select className="input" value={form.upload} onChange={(e) => set("upload", e.target.value)}>
-                {CARRIERS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                {CARRIERS.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label} — {c.desc}</option>
+                ))}
               </select>
-            </label>
-            <label className="field">
+            </div>
+            <div className="field">
               <span>حامل برگشت (خارج → ایران)</span>
               <select className="input" value={form.download} onChange={(e) => set("download", e.target.value)}>
-                {CARRIERS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                {CARRIERS.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label} — {c.desc}</option>
+                ))}
               </select>
-            </label>
+            </div>
+
             <label className="field">
-              <span>پورت دریافت ایران</span>
+              <span>پورت دریافت در ایران</span>
               <input className="input mono" dir="ltr" type="number" min={1} max={65535}
                 value={form.local_port} onChange={(e) => set("local_port", Number(e.target.value))} />
             </label>
             <label className="field">
-              <span>پورت دریافت خارج</span>
+              <span>پورت دریافت در خارج</span>
               <input className="input mono" dir="ltr" type="number" min={1} max={65535}
                 value={form.remote_port} onChange={(e) => set("remote_port", Number(e.target.value))} />
             </label>
           </div>
 
-          <label className="field">
-            <span>این پنل روی کدام سمت است؟</span>
+          {/* Role Choice */}
+          <div className="field">
+            <span>این پنل روی کدام سرور در حال اجراست؟</span>
             <select className="input" value={form.save_role} onChange={(e) => set("save_role", e.target.value)}>
-              <option value="local">ایران · local (ذخیره در این سرور)</option>
-              <option value="remote">خارج · remote (ذخیره در این سرور)</option>
-              <option value="">فقط تولید فایل، بدون ذخیره</option>
+              <option value="local">سرور ایران · local (سمت ایران در همین سرور ذخیره شود)</option>
+              <option value="remote">سرور خارج · remote (سمت خارج در همین سرور ذخیره شود)</option>
+              <option value="">فقط تولید فایل‌ها، بدون ذخیره روی این سرور</option>
             </select>
-          </label>
+          </div>
 
-          <label className="switch-row">
+          <label className="switch-row" style={{ padding: "8px 0" }}>
             <input type="checkbox" checked={form.auto_start} onChange={(e) => set("auto_start", e.target.checked)} />
-            <span>شروع خودکار این اتصال با بالا آمدن پنل</span>
+            <span>شروع خودکار این اتصال پس از بالا آمدن پنل</span>
           </label>
 
           {error && <div role="alert" className="banner error">{error}</div>}
 
-          <button className="btn btn-primary btn-block" disabled={busy || problems.length > 0}>
-            {busy ? "در حال ساخت…" : "ساخت تنظیمات هماهنگ"}
+          <button className="btn btn-primary btn-block" disabled={busy || problems.length > 0} style={{ padding: "14px", fontSize: "15px" }}>
+            {busy ? "در حال ایجاد کلید و تنظیمات…" : "ساخت تنظیمات هماهنگ دوطرفه ←"}
           </button>
-          {problems.length > 0 && <p className="hint">{problems[0]}</p>}
+          {problems.length > 0 && <p className="hint" style={{ color: "var(--accent-amber)" }}>{problems[0]}</p>}
         </form>
 
+        {/* Visual Route Sidebar */}
         <aside className="stack">
           <div className="route-card">
-            <span className="eyebrow">PACKET ROUTE</span>
-            <div className="route-node">ایران <small dir="ltr">{form.local_ip || "LOCAL IPv4"}</small></div>
-            <div className="route-wire"><span>{form.upload.toUpperCase()} ↓ ↑ {form.download.toUpperCase()}</span></div>
-            <div className="route-node">خارج <small dir="ltr">{form.remote_ip || "REMOTE IPv4"}</small></div>
-            <p>IPهای واقعی مقصد بسته‌اند؛ آدرس‌های جعلی فقط در فیلد مبدأ قرار می‌گیرند.</p>
+            <span className="eyebrow">TOPOLOGY VISUALIZER</span>
+            <div className="route-node">
+              <span>سرور ایران</span>
+              <small dir="ltr">{form.local_ip || "LOCAL IPv4"}</small>
+            </div>
+            <div className="route-wire">
+              <span className="mono" style={{ fontWeight: 700 }}>
+                {form.upload.toUpperCase()} ↓ ↑ {form.download.toUpperCase()}
+              </span>
+            </div>
+            <div className="route-node">
+              <span>سرور خارج</span>
+              <small dir="ltr">{form.remote_ip || "REMOTE IPv4"}</small>
+            </div>
+            <p>
+              مقصد بسته‌ها همیشه IP واقعی است؛ آدرس‌های مبدأ با IP جعلی جایگزین می‌شوند.
+              فیلترهای ضداسپوف در سمت دریافت‌کننده بسته‌های غیرمجاز را بی‌صدا حذف می‌کنند.
+            </p>
           </div>
-          <div className="panel">
-            <h3>هستهٔ L3 و رمزنگاری</h3>
-            <p className="page-intro">
-              دو آدرس داخلی از /30 ساخته می‌شود و یک PSK تصادفی ۳۲ بایتی تولید می‌شود.
-              فایل خروجی حاوی کلید است؛ آن را فقط به سرور مقابل برسان.
+
+          <div className="panel inner">
+            <h3>امنیت و کلیدهای جهت‌دار</h3>
+            <p className="hint">
+              کلید PSK تولیدشده به صورت خودکار با برچسب‌های جهتی HMAC مشتق می‌شود
+              (local-to-remote و remote-to-local) تا حملهٔ بازتاب (Reflection Attack) کاملاً ناممکن شود.
             </p>
           </div>
         </aside>
       </div>
 
+      {/* Generated Result Display */}
       {result && (
         <section className="panel result-panel" role="status">
           <div className="section-head">
-            <h2>تنظیمات آماده است</h2>
+            <div>
+              <span className="eyebrow" style={{ color: "var(--accent-cyan)" }}>OUTPUT READY</span>
+              <h2>تنظیمات با موفقیت تولید شد</h2>
+            </div>
             {result.saved ? (
-              <Link className="btn btn-ghost btn-sm" href={base + "/dashboard/tunnels"}>مشاهدهٔ اتصال‌ها</Link>
+              <Link className="btn btn-ghost btn-sm" href={base + "/dashboard/tunnels"}>مشاهده در اتصال‌ها ←</Link>
             ) : null}
           </div>
           <p className="page-intro">
             {result.saved
-              ? "سمت انتخاب‌شده در همین سرور ذخیره شد. فایل سمت دیگر را در پنل مقابل وارد کن."
-              : "هر دو سمت ساخته شد ولی چیزی ذخیره نشد؛ فایل‌ها را دانلود کن."}
+              ? "سمت انتخاب‌شده در لیست اتصال‌های همین سرور ذخیره شد. فایل سمت دیگر را دانلود کرده و در پنل سرور مقابل وارد (Import) کن."
+              : "هر دو فایل ساخته شد. فایل‌ها را دانلود و روی هر سرور وارد کن."}
           </p>
+
           <div className="grid-2">
             {(["local", "remote"] as const).map((role) => (
               <div key={role} className="panel inner">
-                <h3>{role === "local" ? "ایران / local" : "خارج / remote"}</h3>
+                <div className="section-head">
+                  <h3>{role === "local" ? "سرور ایران (Local)" : "سرور خارج (Remote)"}</h3>
+                  <span className="mode-badge">{role}</span>
+                </div>
                 <pre className="code" dir="ltr">{preview(result[role])}</pre>
                 <div className="row">
-                  <button className="btn btn-primary btn-sm" onClick={() => download(`emad-${role}.json`, result[role])}>دانلود فایل</button>
+                  <button className="btn btn-primary btn-sm" onClick={() => { download(`emad-${role}.json`, result[role]); toast.success(`فایل emad-${role}.json دانلود شد.`); }}>
+                    دانلود فایل JSON
+                  </button>
                   <button className="btn btn-ghost btn-sm" onClick={() => copy(role)}>
-                    {copied === role ? "کپی شد" : "کپی"}
+                    {copied === role ? "کپی شد ✓" : "کپی تنظیمات"}
                   </button>
                 </div>
               </div>
             ))}
           </div>
-          <div className="banner warn">فایل حاوی PSK است. آن را در چت عمومی، ریپو یا اسکرین‌شات منتشر نکن.</div>
+
+          <div className="banner warn">
+            <span>⚠ فایل دانلودی شامل کلید خصوصی رمزنگاری (PSK) است. آن را در پیام‌رسان‌ها یا شبکه‌های عمومی به اشتراک نگذار.</span>
+          </div>
         </section>
       )}
     </div>

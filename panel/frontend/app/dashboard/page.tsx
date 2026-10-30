@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "@/lib/link";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
+import { useToast } from "@/lib/toast";
 
 type Telemetry = {
   peer_connected: boolean;
@@ -72,6 +73,7 @@ export default function Dashboard() {
   const [busy, setBusy] = useState<number | null>(null);
   const [updated, setUpdated] = useState("");
   const base = useBasePath();
+  const { toast } = useToast();
 
   const refresh = useCallback(async () => {
     try {
@@ -89,36 +91,54 @@ export default function Dashboard() {
     refresh();
     const t = setInterval(() => {
       if (document.visibilityState === "visible") refresh();
-    }, 4000);
+    }, 3500);
     return () => clearInterval(t);
   }, [refresh]);
 
   async function toggle(i: Instance) {
     setBusy(i.id);
     try {
-      if (i.status === "running") await api.instanceStop(i.id);
-      else await api.instanceStart(i.id);
+      if (i.status === "running") {
+        await api.instanceStop(i.id);
+        toast.info(`اتصال «${i.name}» متوقف شد.`);
+      } else {
+        await api.instanceStart(i.id);
+        toast.success(`اتصال «${i.name}» راه‌اندازی شد.`);
+      }
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "عملیات ناموفق بود");
+      const msg = e instanceof Error ? e.message : "عملیات ناموفق بود";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setBusy(null);
     }
   }
 
   const instances = dash?.instances ?? [];
+  const primary = instances.find((i) => i.engine === "tun" && i.status === "running") || instances[0];
+  const primaryTelemetry = primary?.telemetry;
+  const isPeerConnected = primary?.engine === "tun" && !!primaryTelemetry?.peer_connected;
 
   return (
     <div className="page">
+      {/* Page Header */}
       <div className="page-head">
         <div>
           <div className="eyebrow">NETWORK OPERATIONS / 01</div>
           <h1>کنترل مسیر، در یک نگاه.</h1>
-          <p className="page-intro">وضعیت پردازش تونل‌ها، ارتباط احرازشدهٔ طرف مقابل و ترافیک این سرور.</p>
+          <p className="page-intro">
+            مانیتورینگ بلادرنگ تونل‌های لایهٔ ۳، وضعیت احراز هویت بسته‌ها، پینگ زنده و ترافیک عبوری.
+          </p>
         </div>
-        <Link className="btn btn-primary" href={base + "/dashboard/pair"}>
-          + اتصال دوطرفه
-        </Link>
+        <div className="row">
+          <button className="btn btn-ghost" onClick={() => { refresh(); toast.info("اطلاعات به‌روزرسانی شد."); }}>
+            ↺ به‌روزرسانی
+          </button>
+          <Link className="btn btn-primary" href={base + "/dashboard/pair"}>
+            + ساخت اتصال دوطرفه
+          </Link>
+        </div>
       </div>
 
       {error && (
@@ -128,27 +148,121 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Top Bento Showcase Grid */}
+      <div className="grid-2-1">
+        {/* Bento Hero Card */}
+        <section className="panel bento-hero">
+          <div className="section-head">
+            <div>
+              <span className="eyebrow" style={{ color: "var(--accent-cyan)" }}>PRIMARY LINK HEALTH</span>
+              <h2>{primary ? primary.name : "وضعیت پیوند شبکه"}</h2>
+            </div>
+            <span className={`pill ${isPeerConnected ? "ok" : primary?.status === "running" ? "warn" : "muted"}`}>
+              {isPeerConnected ? "پاسخ معتبر دریافت شد" : primary?.status === "running" ? "در انتظار پاسخ طرف مقابل" : "پیوند خاموش"}
+            </span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 24, padding: "12px 0", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: "50%",
+                background: isPeerConnected ? "rgba(34, 197, 94, 0.15)" : "rgba(148, 163, 184, 0.1)",
+                border: `2px solid ${isPeerConnected ? "#22c55e" : "rgba(255,255,255,0.1)"}`,
+                display: "grid", placeItems: "center",
+                boxShadow: isPeerConnected ? "0 0 25px rgba(34, 197, 94, 0.4)" : "none",
+              }}>
+                <span style={{ fontSize: 20 }}>{isPeerConnected ? "✓" : "●"}</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>پروتکل رمزنگاری</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>AES-256-GCM (لایهٔ ۳)</div>
+              </div>
+            </div>
+
+            <div style={{ height: 36, width: 1, background: "var(--border-subtle)" }} className="hide-mobile" />
+
+            <div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>تأخیر واقعی (RTT)</div>
+              <div className="mono" style={{ fontSize: 20, fontWeight: 800, color: isPeerConnected ? "var(--accent-cyan)" : "var(--text-muted)" }}>
+                {isPeerConnected && primaryTelemetry?.rtt_ms ? `${fa(Math.round(primaryTelemetry.rtt_ms))} ms` : "—"}
+              </div>
+            </div>
+
+            <div style={{ height: 36, width: 1, background: "var(--border-subtle)" }} className="hide-mobile" />
+
+            <div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>کل بسته‌های عبوری</div>
+              <div className="mono" style={{ fontSize: 20, fontWeight: 800 }}>
+                {primaryTelemetry ? fa((primaryTelemetry.tx_packets || 0) + (primaryTelemetry.rx_packets || 0)) : "۰"}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", borderTop: "1px solid var(--border-subtle)", paddingTop: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+            <span>ضربان قلب احرازشده: <strong>هر ۳ ثانیه</strong></span>
+            <span>پنجرهٔ ضدبازپخش: <strong>۱۰۲۴ بسته</strong></span>
+            <span>نرخ افت بسته: <strong>{primaryTelemetry?.drops ? `${fa(primaryTelemetry.drops)} drop` : "صفر"}</strong></span>
+          </div>
+        </section>
+
+        {/* Live Speed & Flow Bento */}
+        <section className="panel" style={{ justifyContent: "space-between" }}>
+          <div>
+            <div className="eyebrow">THROUGHPUT VOLUME</div>
+            <h2>ترافیک کل</h2>
+            <p className="hint">مجموع حجم رد و بدل شده روی این سرور.</p>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, padding: "8px 0" }}>
+            <div style={{ background: "rgba(255,255,255,0.02)", padding: 14, borderRadius: 12, border: "1px solid var(--border-subtle)" }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>↑ ارسال (TX)</div>
+              <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>
+                {bytes(primaryTelemetry?.tx_bytes)}
+              </div>
+            </div>
+            <div style={{ background: "rgba(255,255,255,0.02)", padding: 14, borderRadius: 12, border: "1px solid var(--border-subtle)" }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>↓ دریافت (RX)</div>
+              <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: "var(--accent-cyan)" }}>
+                {bytes(primaryTelemetry?.rx_bytes)}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
+            <span>وضعیت: {updated ? `به‌روزرسانی ${updated}` : "در حال دریافت…"}</span>
+            <span style={{ color: "var(--accent-cyan)" }}>● زنده</span>
+          </div>
+        </section>
+      </div>
+
+      {/* 4 Stats Cards Bento */}
       <div className="stats">
         {[
           ["کل اتصال‌ها", dash?.total, "01"],
-          ["در حال اجرا", dash?.running_count, "02"],
-          ["متوقف", dash?.stopped_count, "03"],
+          ["پردازش‌های فعال", dash?.running_count, "02"],
+          ["اتصال‌های متوقف", dash?.stopped_count, "03"],
           ["نیازمند بررسی", dash?.error_count, "04"],
         ].map(([label, value, idx]) => (
           <div className="stat" key={String(idx)}>
-            <span className="stat-index">{idx}</span>
-            <span className="stat-label">{label}</span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span className="stat-label">{label}</span>
+              <span className="mono" style={{ fontSize: 11, color: "var(--accent-cyan)", opacity: 0.8 }}>#{idx}</span>
+            </div>
             <strong className="stat-value">{value === undefined ? "—" : fa(Number(value))}</strong>
           </div>
         ))}
       </div>
 
+      {/* Main Connection Table Bento */}
       <section className="panel">
         <div className="section-head">
-          <h2>اتصال‌های این سرور</h2>
+          <div>
+            <h2>اتصال‌های فعال و پیکربندی‌شده</h2>
+            <p className="hint">فهرست تونل‌های مستقل تعریف‌شده روی این سرور.</p>
+          </div>
           <span className="live-label">
             <span className={`status-dot ${error ? "stopped" : "running"}`} />
-            {updated ? `به‌روزرسانی ${updated}` : "در حال دریافت…"}
+            {instances.length} تونل ثبت‌شده
           </span>
         </div>
 
@@ -157,10 +271,10 @@ export default function Dashboard() {
         {dash && instances.length === 0 && (
           <div className="empty">
             <div className="empty-icon">↔</div>
-            <h3>هنوز مسیری ساخته نشده</h3>
-            <p>آدرس واقعی و مبدأ جعلی دو سرور را وارد کن تا تنظیمات مکمل ساخته شود.</p>
-            <div className="row center">
-              <Link className="btn btn-primary" href={base + "/dashboard/pair"}>ساخت اتصال</Link>
+            <h3>هنوز اتصالی پیکربندی نشده است</h3>
+            <p>مشخصات دو سرور را وارد کن تا تنظیمات مکمل و کلید رمزنگاری تولید شوند.</p>
+            <div className="row center" style={{ marginTop: 8 }}>
+              <Link className="btn btn-primary" href={base + "/dashboard/pair"}>ساخت اولین اتصال دوطرفه</Link>
               <Link className="btn btn-ghost" href={base + "/dashboard/tunnels"}>ورود فایل تنظیمات</Link>
             </div>
           </div>
@@ -171,13 +285,13 @@ export default function Dashboard() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>نام / نقش</th>
-                  <th>پردازش</th>
+                  <th>نام اتصال / نقش</th>
+                  <th>وضعیت پروسه</th>
                   <th>ارتباط دوطرفه</th>
-                  <th>ترافیک</th>
-                  <th>تأخیر</th>
-                  <th>اجرا</th>
-                  <th>کنترل</th>
+                  <th>ترافیک ارسالی / دریافتی</th>
+                  <th>تأخیر واقعی (RTT)</th>
+                  <th>زمان اجرا</th>
+                  <th>کنترل سریع</th>
                 </tr>
               </thead>
               <tbody>
@@ -189,8 +303,8 @@ export default function Dashboard() {
                       <td>
                         <Link className="row-link" href={base + `/dashboard/tunnels/edit?id=${i.id}`}>{i.name}</Link>
                         <div className="sub">
-                          <span className={`mode-badge ${i.mode}`}>{i.mode === "local" ? "ایران" : "خارج"}</span>
-                          <span className="mono">{i.engine === "tun" ? "L3" : "UDP"}</span>
+                          <span className={`mode-badge ${i.mode}`}>{i.mode === "local" ? "ایران · local" : "خارج · remote"}</span>
+                          <span className="mono" style={{ color: "var(--accent-cyan)" }}>{i.engine === "tun" ? "TUN L3" : "UDP Relay"}</span>
                         </div>
                       </td>
                       <td>
@@ -201,16 +315,15 @@ export default function Dashboard() {
                         {i.engine !== "tun" ? (
                           <span className="pill muted">رله قدیمی</span>
                         ) : peer ? (
-                          <span className="pill ok">پاسخ معتبر</span>
+                          <span className="pill ok">پاسخ معتبر ✓</span>
                         ) : (
                           <span className={`pill ${i.status === "running" ? "warn" : "muted"}`}>
-                            {i.status === "running" ? "در انتظار پاسخ" : "—"}
+                            {i.status === "running" ? "در انتظار پاسخ…" : "—"}
                           </span>
                         )}
                       </td>
                       <td className="mono" dir="ltr">
                         ↑ {bytes(t?.tx_bytes)}<br />↓ {bytes(t?.rx_bytes)}
-                        {!!t?.drops && <div className="drop-note">{fa(t.drops)} drop</div>}
                       </td>
                       <td className="mono">{peer && t?.rtt_ms ? `${fa(Math.round(t.rtt_ms))} ms` : "—"}</td>
                       <td className="mono">{uptime(i.uptime)}</td>
@@ -223,7 +336,9 @@ export default function Dashboard() {
                           >
                             {busy === i.id ? "…" : i.status === "running" ? "توقف" : "راه‌اندازی"}
                           </button>
-                          <Link className="btn btn-ghost btn-sm" href={base + `/dashboard/tunnels/edit?id=${i.id}`}>تنظیمات</Link>
+                          <Link className="btn btn-ghost btn-sm" href={base + `/dashboard/tunnels/edit?id=${i.id}`}>
+                            تنظیمات
+                          </Link>
                         </div>
                       </td>
                     </tr>
@@ -235,27 +350,39 @@ export default function Dashboard() {
         )}
       </section>
 
+      {/* Bottom Bento Row: Route Flow & System Specs */}
       <div className="grid-2-1">
         <section className="route-card">
-          <div className="eyebrow">HOW TRAFFIC FLOWS</div>
-          <h2>مقصد واقعی، مبدأ قابل انتخاب.</h2>
-          <div className="path" dir="ltr">
-            <span>TCP / UDP / ICMP</span><b>→</b><span>Local</span><b>⇄</b><span>Remote</span><b>→</b><span>Peer TUN</span>
+          <div className="eyebrow">DYNAMIC SPOOF ROUTING</div>
+          <h2>جریان فریم‌های رمزشده در شبکه</h2>
+          <div className="path-flow" dir="ltr">
+            <div className="path-node"><span>TCP / UDP / ICMP</span></div>
+            <div className="path-arrow">➔</div>
+            <div className="path-node" style={{ borderColor: "rgba(99, 102, 241, 0.4)", color: "#a5b4fc" }}>
+              <span>Local TUN</span>
+            </div>
+            <div className="path-arrow">⇄</div>
+            <div className="path-node" style={{ borderColor: "rgba(88, 217, 194, 0.4)", color: "var(--accent-cyan)" }}>
+              <span>Remote TUN</span>
+            </div>
+            <div className="path-arrow">➔</div>
+            <div className="path-node"><span>سرویس مقصد</span></div>
           </div>
-          <p>
-            «پاسخ معتبر» یعنی بستهٔ challenge طرف مقابل با کلید مشترک تأیید شده است؛ نه اینکه سرویس یا اینترنت شما سالم است.
-            اگر پاسخ نمی‌رسد، فایل سمت مقابل، حامل‌های رفت و برگشت، پورت‌های دریافت و پذیرش spoof در دیتاسنتر را بررسی کن.
+          <p style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.9 }}>
+            آدرس مبدأ در سطح لایهٔ شبکه با IPهای جعلی در حال گردش جایگزین می‌شود، در حالی که مقصد همیشه IP واقعی سرور است.
+            تمام بسته‌های داخلی به صورت سرتاسری با استاندارد <strong>AES-256-GCM</strong> رمزگذاری شده و در برابر شنود و فیلترینگ هوشمند محافظت می‌شوند.
           </p>
         </section>
 
         <section className="panel">
-          <div className="eyebrow">HOST TELEMETRY</div>
-          <h2>{sys?.hostname || "سرور"}</h2>
-          <dl className="host-info">
-            <dt>سیستم</dt><dd dir="ltr">{sys ? `${sys.os} / ${sys.arch}` : "—"}</dd>
-            <dt>پردازنده</dt><dd>{sys?.cpus ?? "—"} هسته</dd>
-            <dt>حافظهٔ پنل</dt><dd>{sys ? `${sys.memory_mb} MB` : "—"}</dd>
-            <dt>نسخهٔ Go</dt><dd dir="ltr">{sys?.go_version ?? "—"}</dd>
+          <div className="eyebrow">NODE TELEMETRY</div>
+          <h2>مشخصات سرور میزبان</h2>
+          <dl className="host-info" style={{ marginTop: 8 }}>
+            <dt>نام هاست</dt><dd className="mono" dir="ltr">{sys?.hostname || "—"}</dd>
+            <dt>سیستم‌عامل</dt><dd className="mono" dir="ltr">{sys ? `${sys.os} / ${sys.arch}` : "—"}</dd>
+            <dt>پردازنده</dt><dd>{sys?.cpus ? `${fa(sys.cpus)} هسته` : "—"}</dd>
+            <dt>حافظهٔ پنل</dt><dd className="mono" dir="ltr">{sys ? `${sys.memory_mb} MB` : "—"}</dd>
+            <dt>ران‌تایم</dt><dd className="mono" dir="ltr">{sys?.go_version || "Go"}</dd>
           </dl>
         </section>
       </div>

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { useToast } from "@/lib/toast";
 
 type TesterResult = {
   ip: string;
@@ -22,6 +23,7 @@ type TesterState = {
 };
 
 export default function TesterPage() {
+  const { toast } = useToast();
   const [tab, setTab] = useState<"receiver" | "sender">("receiver");
   const [state, setState] = useState<TesterState>({
     status: "idle",
@@ -102,8 +104,11 @@ export default function TesterPage() {
         recv_count: 0,
         results: [],
       });
+      toast.info(`آزمون ${tab === "receiver" ? "گیرنده" : "فرستنده"} آغاز شد.`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "خطا در شروع آزمون");
+      const msg = e instanceof Error ? e.message : "خطا در شروع آزمون";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -113,6 +118,7 @@ export default function TesterPage() {
     try {
       await api.testerStop();
       setState((prev) => ({ ...prev, status: "idle" }));
+      toast.info("آزمون متوقف گردید.");
     } catch {}
   };
 
@@ -122,8 +128,11 @@ export default function TesterPage() {
     try {
       const result = await api.testerUpload(file);
       setIpList(result.content);
+      toast.success("فایل با موفقیت بارگذاری شد.");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "بارگذاری فایل ناموفق بود");
+      const msg = err instanceof Error ? err.message : "بارگذاری فایل ناموفق بود";
+      setError(msg);
+      toast.error(msg);
     }
     e.target.value = "";
   };
@@ -132,6 +141,7 @@ export default function TesterPage() {
     const ips = results.filter((r) => r.passed).map((r) => r.ip).join("\n");
     navigator.clipboard.writeText(ips).then(() => {
       setCopied(true);
+      toast.success("آدرس‌های تأییدشده در کلیپ‌بورد کپی شدند.");
       setTimeout(() => setCopied(false), 2000);
     }).catch(() => {});
   };
@@ -145,6 +155,7 @@ export default function TesterPage() {
     a.download = "spoof-ips.txt";
     a.click();
     URL.revokeObjectURL(url);
+    toast.success("فایل spoof-ips.txt دانلود شد.");
   };
 
   const results = state.results || [];

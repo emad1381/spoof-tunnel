@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "@/lib/link";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
+import { useToast } from "@/lib/toast";
 
 type Instance = {
   id: number;
@@ -16,6 +17,7 @@ type Instance = {
   recv_transport: string;
   remote_addr?: string;
   client_ip?: string;
+  tun_interface?: string;
   tun_address?: string;
   tun_peer?: string;
   spoof_ip?: string;
@@ -60,6 +62,7 @@ export default function TunnelsPage() {
   const [toDelete, setToDelete] = useState<Instance | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const base = useBasePath();
+  const { toast } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -84,15 +87,24 @@ export default function TunnelsPage() {
     return () => clearInterval(t);
   }, [load]);
 
-  const action = async (id: number, kind: "start" | "stop" | "restart") => {
+  const action = async (id: number, kind: "start" | "stop" | "restart", name: string) => {
     setBusy(id);
     try {
-      if (kind === "start") await api.instanceStart(id);
-      else if (kind === "stop") await api.instanceStop(id);
-      else await api.instanceRestart(id);
-      setTimeout(load, 600);
+      if (kind === "start") {
+        await api.instanceStart(id);
+        toast.success(`اتصال «${name}» با موفقیت راه‌اندازی شد.`);
+      } else if (kind === "stop") {
+        await api.instanceStop(id);
+        toast.info(`اتصال «${name}» متوقف گردید.`);
+      } else {
+        await api.instanceRestart(id);
+        toast.success(`اتصال «${name}» مجدداً راه‌اندازی شد.`);
+      }
+      setTimeout(load, 700);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "عملیات ناموفق بود");
+      const msg = e instanceof Error ? e.message : "عملیات ناموفق بود";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setBusy(null);
     }
@@ -102,17 +114,20 @@ export default function TunnelsPage() {
     if (!toDelete) return;
     try {
       await api.deleteInstance(toDelete.id);
+      toast.success(`اتصال «${toDelete.name}» حذف گردید.`);
       setToDelete(null);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "حذف ناموفق بود");
+      const msg = e instanceof Error ? e.message : "حذف ناموفق بود";
+      setError(msg);
+      toast.error(msg);
     }
   };
 
   const importFile = async (file: File) => {
     try {
       const config = JSON.parse(await file.text());
-      if (!config || typeof config !== "object") throw new Error("فایل JSON معتبر نیست.");
+      if (!config || typeof config !== "object") throw new Error("فایل JSON نامعتبر است.");
       delete config.id;
       delete config.created_at;
       delete config.updated_at;
@@ -120,9 +135,12 @@ export default function TunnelsPage() {
       delete config.uptime;
       if (!config.name) config.name = file.name.replace(/\.json$/i, "");
       await api.createInstance(config);
+      toast.success(`اتصال «${config.name}» از فایل وارد شد.`);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ورود تنظیمات ناموفق بود");
+      const msg = e instanceof Error ? e.message : "ورود فایل ناموفق بود";
+      setError(msg);
+      toast.error(msg);
     }
   };
 
@@ -131,8 +149,10 @@ export default function TunnelsPage() {
       <div className="page-head">
         <div>
           <div className="eyebrow">CONNECTIONS / 03</div>
-          <h1>اتصال‌ها</h1>
-          <p className="page-intro">هر اتصال یک رابط TUN و یک شبکهٔ داخلی مستقل دارد. قبل از ویرایش، پردازش را متوقف کن.</p>
+          <h1>مدیریت اتصال‌ها</h1>
+          <p className="page-intro">
+            هر تونل یک رابط مجازی TUN اختصاصی، کلید رمزنگاری مجزا و زیرشبکهٔ /30 مستقل دارد.
+          </p>
         </div>
         <div className="row">
           <button className="btn btn-ghost" onClick={() => fileRef.current?.click()}>
@@ -149,7 +169,7 @@ export default function TunnelsPage() {
               e.target.value = "";
             }}
           />
-          <Link className="btn btn-primary" href={base + "/dashboard/pair"}>+ اتصال جدید</Link>
+          <Link className="btn btn-primary" href={base + "/dashboard/pair"}>+ ساخت اتصال جدید</Link>
         </div>
       </div>
 
@@ -160,13 +180,13 @@ export default function TunnelsPage() {
         </div>
       )}
 
-      {loading && <p className="muted">در حال دریافت…</p>}
+      {loading && <p className="muted">در حال دریافت وضعیت…</p>}
 
       {!loading && instances.length === 0 && (
         <div className="empty panel">
           <div className="empty-icon">🔗</div>
-          <h3>هنوز اتصالی ثبت نشده</h3>
-          <p>با «اتصال جدید» هر دو سمت را بساز، یا فایل JSON سمت مقابل را وارد کن.</p>
+          <h3>هنوز اتصالی ثبت نشده است</h3>
+          <p>با «ساخت اتصال جدید» تنظیمات هر دو سمت را به راحتی تولید کن یا فایل JSON موجود را وارد کن.</p>
           <Link className="btn btn-primary" href={base + "/dashboard/pair"}>ساخت اتصال دوطرفه</Link>
         </div>
       )}
@@ -185,7 +205,8 @@ export default function TunnelsPage() {
                     <Link className="conn-title" href={`${base}/dashboard/tunnels/edit?id=${i.id}`}>{i.name}</Link>
                     <div className="sub">
                       <span className={`mode-badge ${i.mode}`}>{i.mode === "local" ? "ایران · local" : "خارج · remote"}</span>
-                      <span className="mono" dir="ltr">{i.send_transport} → {i.recv_transport}</span>
+                      <span className="mono" dir="ltr">{i.send_transport} ➔ {i.recv_transport}</span>
+                      <span className="mono" style={{ color: "var(--accent-cyan)", fontSize: 11 }}>{i.tun_interface || "tun"}</span>
                     </div>
                   </div>
                 </div>
@@ -193,10 +214,10 @@ export default function TunnelsPage() {
               </header>
 
               <div className="conn-grid">
-                <div><span className="k">طرف مقابل</span><span className="v mono" dir="ltr">{endpoint || "—"}</span></div>
-                <div><span className="k">شبکهٔ داخلی</span><span className="v mono" dir="ltr">{i.tun_address || "—"} → {i.tun_peer || "—"}</span></div>
-                <div><span className="k">مبدأ جعلی</span><span className="v mono" dir="ltr">{i.spoof_ip || "—"}</span></div>
-                <div><span className="k">پورت‌ها</span><span className="v mono" dir="ltr">{i.mode === "local" ? `${i.remote_port}/${i.recv_port}` : `${i.listen_port}/${i.client_port}`}</span></div>
+                <div><span className="k">سرور طرف مقابل</span><span className="v mono" dir="ltr">{endpoint || "—"}</span></div>
+                <div><span className="k">شبکهٔ داخلی TUN</span><span className="v mono" dir="ltr">{i.tun_address || "—"} ➔ {i.tun_peer || "—"}</span></div>
+                <div><span className="k">مبدأ جعلی بسته</span><span className="v mono" dir="ltr">{i.spoof_ip || "—"}</span></div>
+                <div><span className="k">پورت‌های رفت/برگشت</span><span className="v mono" dir="ltr">{i.mode === "local" ? `${i.remote_port}/${i.recv_port}` : `${i.listen_port}/${i.client_port}`}</span></div>
               </div>
 
               {i.status_error && <div className="inline-error">{i.status_error}</div>}
@@ -204,20 +225,20 @@ export default function TunnelsPage() {
               <footer className="conn-foot">
                 <div className="conn-telemetry">
                   <span className={peer ? "pill ok" : i.status === "running" ? "pill warn" : "pill muted"}>
-                    {i.engine !== "tun" ? "رله قدیمی" : peer ? "پاسخ معتبر" : i.status === "running" ? "در انتظار پاسخ" : "بدون ارتباط"}
+                    {i.engine !== "tun" ? "رله قدیمی" : peer ? "پاسخ معتبر ✓" : i.status === "running" ? "در انتظار پاسخ طرف مقابل" : "بدون ارتباط"}
                   </span>
-                  <span className="mono" dir="ltr">↑{size(t?.tx_bytes)} ↓{size(t?.rx_bytes)}</span>
-                  {peer && t?.rtt_ms ? <span className="mono" dir="ltr">{Math.round(t.rtt_ms)} ms</span> : null}
+                  <span className="mono" dir="ltr">↑ {size(t?.tx_bytes)}  ↓ {size(t?.rx_bytes)}</span>
+                  {peer && t?.rtt_ms ? <span className="mono" style={{ color: "var(--accent-cyan)" }}>{Math.round(t.rtt_ms)} ms</span> : null}
                   <span className="mono" dir="ltr">{duration(i.uptime)}</span>
                 </div>
                 <div className="row">
                   {i.status === "running" ? (
                     <>
-                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "stop")}>توقف</button>
-                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "restart")}>راه‌اندازی مجدد</button>
+                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "stop", i.name)}>توقف</button>
+                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "restart", i.name)}>راه‌اندازی مجدد</button>
                     </>
                   ) : (
-                    <button className="btn btn-primary btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "start")}>
+                    <button className="btn btn-primary btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "start", i.name)}>
                       {busy === i.id ? "…" : "راه‌اندازی"}
                     </button>
                   )}
@@ -233,9 +254,9 @@ export default function TunnelsPage() {
       {toDelete && (
         <div className="modal-overlay" onClick={() => setToDelete(null)}>
           <div className="modal-content" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-            <h2>حذف اتصال</h2>
-            <p className="page-intro">
-              «{toDelete.name}» و تنظیمات محلی آن حذف می‌شود. سمت مقابل جداگانه باید حذف شود.
+            <h2 style={{ marginBottom: 12 }}>حذف اتصال</h2>
+            <p className="page-intro" style={{ marginBottom: 20 }}>
+              آیا از حذف اتصال «{toDelete.name}» مطمئن هستید؟ فایل‌های تنظیمات محلی پاک خواهند شد.
             </p>
             <div className="row end">
               <button className="btn btn-ghost" onClick={() => setToDelete(null)}>انصراف</button>
