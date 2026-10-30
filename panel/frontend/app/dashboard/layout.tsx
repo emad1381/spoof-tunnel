@@ -1,21 +1,22 @@
 "use client";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import Link from "next/link";
-import { getBasePath } from "@/lib/basepath";
+import Link from "@/lib/link";
+import { useBasePath } from "@/lib/basepath";
 
 const NAV_ITEMS = [
-  { path: "/dashboard", icon: "📊", label: "Dashboard" },
-  { path: "/dashboard/tunnels", icon: "🔗", label: "Tunnels" },
-  { path: "/dashboard/tester", icon: "🔬", label: "Spoof Tester" },
-  { path: "/dashboard/settings", icon: "🔒", label: "Settings" },
+  { path: "/dashboard", icon: "◈", label: "نمای کلی" },
+  { path: "/dashboard/pair", icon: "⇄", label: "ساخت اتصال دوطرفه" },
+  { path: "/dashboard/tunnels", icon: "🔗", label: "اتصال‌ها" },
+  { path: "/dashboard/tester", icon: "🔬", label: "آزمون اسپوف" },
+  { path: "/dashboard/settings", icon: "🔒", label: "تنظیمات" },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const basePath = getBasePath();
+  const basePath = useBasePath();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -61,7 +62,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           }}>
             SP
           </div>
-          <span className="brand-title">Spoof Tunnel v3.0.1</span>
+          <span className="brand-title">EMAD · Spoof Tunnel</span>
         </div>
         <div className="header-actions">
           <a
@@ -144,7 +145,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Footer */}
       <footer className="app-footer">
-        <span>Spoof Tunnel v3.0.1 — Rust Transport Engine</span>
+        <span>EMAD · Spoof Tunnel · Authenticated L3 Engine</span>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <a
             href="https://github.com/ParsaKSH/spoof-tunnel"

@@ -1,13 +1,16 @@
 package api
 
 import (
+	"github.com/ParsaKSH/spoof-tunnel/panel/internal/db"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ParsaKSH/spoof-tunnel/internal/tester"
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/auth"
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/manager"
-	"github.com/gin-contrib/cors"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -19,21 +22,24 @@ type Server struct {
 	tester  *tester.Runner
 	router  *gin.Engine
 	webPath string
+	loginMu sync.Mutex
+	logins  map[string][]time.Time
 }
 
 // NewServer creates a new API server
 func NewServer(database *gorm.DB, mgr *manager.Manager, webPath string) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery())
 
-	// CORS
-	r.Use(cors.New(cors.Config{
-		AllowAllOrigins:  true,
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		AllowCredentials: true,
-	}))
+	r.Use(func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Header("X-Frame-Options", "DENY")
+		c.Next()
+	})
 
 	s := &Server{
 		db:      database,
@@ -41,6 +47,7 @@ func NewServer(database *gorm.DB, mgr *manager.Manager, webPath string) *Server 
 		tester:  tester.NewRunner(),
 		router:  r,
 		webPath: webPath,
+		logins:  make(map[string][]time.Time),
 	}
 
 	s.setupRoutes()
@@ -76,6 +83,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/system", s.handleSystem)
 
 			// Tunnel Instances CRUD
+			protected.POST("/pairs", s.handlePair)
 			protected.GET("/instances", s.handleListInstances)
 			protected.POST("/instances", s.handleCreateInstance)
 			protected.GET("/instances/:id", s.handleGetInstance)
@@ -132,6 +140,11 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		var user db.User
+		if s.db.Select("id", "token_version").First(&user, claims.UserID).Error != nil || user.TokenVersion != claims.TokenVersion {
+			c.AbortWithStatusJSON(401, gin.H{"error": "session expired"})
+			return
+		}
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
 		c.Next()

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 /**
  * Detect the web path prefix from the current URL.
  * E.g. if the user is at http://host:port/abc123/dashboard, returns "/abc123".
@@ -12,4 +13,10 @@ export function getBasePath(): string {
     return '/' + parts[0];
   }
   return '';
+}
+
+export function useBasePath(): string {
+ const [base,setBase]=useState("");
+ useEffect(()=>setBase(getBasePath()),[]);
+ return base;
 }

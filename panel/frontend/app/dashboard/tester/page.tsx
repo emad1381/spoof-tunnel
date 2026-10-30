@@ -15,13 +15,18 @@ type TesterState = {
   mode: string;
   error?: string;
   progress: number;
+  total_ips: number;
+  passed_count: number;
+  recv_count: number;
   results: TesterResult[];
 };
 
 export default function TesterPage() {
   const [tab, setTab] = useState<"receiver" | "sender">("receiver");
-  const [state, setState] = useState<TesterState>({ status: "idle", mode: "", progress: 0, results: [] });
+  const [state, setState] = useState<TesterState>({ status: "idle", mode: "", progress: 0, total_ips: 0, passed_count: 0, recv_count: 0, results: [] });
+  const [inputType, setInputType] = useState<"text" | "file_path">("text");
   const [ipList, setIpList] = useState("");
+  const [serverFilePath, setServerFilePath] = useState("");
   const [copied, setCopied] = useState(false);
   const [protocol, setProtocol] = useState("icmp");
   const [dstIP, setDstIP] = useState("");
@@ -46,13 +51,14 @@ export default function TesterPage() {
             clearInterval(pollRef.current);
           }
         } catch { }
-      }, 1000);
+      }, 2000);
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [state.status]);
 
   const handleStart = async () => {
-    if (!ipList.trim()) { setError("Enter source IPs"); return; }
+    if (inputType === "text" && !ipList.trim()) { setError("Enter source IPs"); return; }
+    if (inputType === "file_path" && !serverFilePath.trim()) { setError("Enter server file path"); return; }
     if (tab === "sender" && !dstIP.trim()) { setError("Enter destination IP"); return; }
     setError("");
     setLoading(true);
@@ -60,7 +66,8 @@ export default function TesterPage() {
       await api.testerStart({
         mode: tab,
         protocol,
-        ip_list: ipList,
+        ip_list: inputType === "text" ? ipList : "",
+        file_path: inputType === "file_path" ? serverFilePath : "",
         dst_ip: dstIP,
         dst_port: dstPort,
         timeout: timeout,
@@ -68,7 +75,7 @@ export default function TesterPage() {
         max_packet_loss: maxLoss,
         concurrency,
       });
-      setState({ status: "running", mode: tab, progress: 0, results: [] });
+      setState({ status: "running", mode: tab, progress: 0, total_ips: 0, passed_count: 0, recv_count: 0, results: [] });
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -129,8 +136,9 @@ export default function TesterPage() {
   };
 
   const results = state.results || [];
-  const passedCount = results.filter(r => r.passed).length;
-  const failedCount = results.length - passedCount;
+  const passedCount = state.passed_count || results.filter(r => r.passed).length;
+  const totalIPs = state.total_ips || results.length;
+  const receivedCount = results.length;
 
   const lossColor = (pct: number) => {
     if (pct <= 10) return "var(--success)";
@@ -191,17 +199,21 @@ export default function TesterPage() {
                 <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>Destination IP (Receiver Server)</label>
                 <input className="input" value={dstIP} onChange={e => setDstIP(e.target.value)} placeholder="e.g. 1.2.3.4" />
               </div>
-              {protocol === "tcp" && (
-                <div style={{ marginBottom: 14 }}>
-                  <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>Destination Port</label>
-                  <input className="input" type="number" value={dstPort} onChange={e => setDstPort(+e.target.value)} />
-                </div>
-              )}
               <div style={{ marginBottom: 14 }}>
                 <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>Concurrency</label>
                 <input className="input" type="number" value={concurrency} onChange={e => setConcurrency(+e.target.value)} min={1} max={1000} />
               </div>
             </>
+          )}
+
+          {/* Shared (TCP only): Port */}
+          {protocol === "tcp" && (
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
+                {tab === "sender" ? "Destination Port" : "Filter Port (0 = all)"}
+              </label>
+              <input className="input" type="number" value={dstPort} onChange={e => setDstPort(+e.target.value)} />
+            </div>
           )}
 
           {/* Receiver: Timeout */}
@@ -229,29 +241,57 @@ export default function TesterPage() {
             </div>
           )}
 
-          {/* Source IP List */}
+          {/* Source Input Type */}
           <div style={{ marginBottom: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-              <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                Source IPs (one per line, CIDR, ranges)
+            <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 8 }}>IP List Source</label>
+            <div style={{ display: "flex", gap: 16 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                <input type="radio" checked={inputType === "text"} onChange={() => setInputType("text")} />
+                Manual Input / Upload
               </label>
-              <button className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => fileInputRef.current?.click()}>
-                📁 Upload File
-              </button>
-              <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{ display: "none" }} accept=".txt,.csv,.list" />
-            </div>
-            <textarea
-              className="input"
-              value={ipList}
-              onChange={e => setIpList(e.target.value)}
-              placeholder={"192.168.1.1\n10.0.0.0/24\n172.16.0.1-172.16.0.50"}
-              rows={8}
-              style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, resize: "vertical" }}
-            />
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
-              {ipList.trim() ? `${ipList.trim().split("\n").filter(l => l.trim()).length} lines` : "No IPs entered"}
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                <input type="radio" checked={inputType === "file_path"} onChange={() => setInputType("file_path")} />
+                Server File Path
+              </label>
             </div>
           </div>
+
+          {/* Source Content */}
+          {inputType === "text" ? (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                  Source IPs (one per line, CIDR, ranges)
+                </label>
+                <button className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => fileInputRef.current?.click()}>
+                  📁 Upload File
+                </button>
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{ display: "none" }} accept=".txt,.csv,.list" />
+              </div>
+              <textarea
+                className="input"
+                value={ipList}
+                onChange={e => setIpList(e.target.value)}
+                placeholder={"1.1.1.1\n10.0.0.0/8\n192.168.1.1-192.168.1.100"}
+                style={{ height: 120, fontFamily: "monospace", fontSize: 13, resize: "vertical" }}
+              />
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+                {ipList.trim() ? `${ipList.trim().split("\n").filter(l => l.trim()).length} lines` : "No IPs entered"}
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
+                Absolute path to IP list file on server (e.g. /opt/ips.txt)
+              </label>
+              <input
+                className="input"
+                value={serverFilePath}
+                onChange={e => setServerFilePath(e.target.value)}
+                placeholder="/path/to/your/ips.txt"
+              />
+            </div>
+          )}
 
           {error && (
             <div style={{ background: "#ef444420", border: "1px solid var(--danger)", borderRadius: 8, padding: "8px 12px", marginBottom: 14, color: "var(--danger)", fontSize: 13 }}>
@@ -312,20 +352,37 @@ export default function TesterPage() {
           )}
 
           {/* Results Summary */}
-          {results.length > 0 && (
+          {(results.length > 0 || state.recv_count > 0) && (
             <>
+              {/* Live indicator */}
+              {state.status === "running" && state.mode === "receiver" && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+                  padding: "8px 14px", borderRadius: 8,
+                  background: "#22c55e10", border: "1px solid #22c55e30",
+                }}>
+                  <span style={{
+                    display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+                    background: "#22c55e", animation: "pulse 1.5s infinite",
+                  }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--success)" }}>LIVE</span>
+                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    Receiving packets... {state.recv_count} IPs detected so far
+                  </span>
+                </div>
+              )}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
                 <div style={{ background: "var(--bg-secondary)", borderRadius: 8, padding: "12px", textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--text-primary)" }}>{results.length}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Total</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--text-primary)" }}>{totalIPs.toLocaleString()}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Total IPs</div>
                 </div>
                 <div style={{ background: "#22c55e15", borderRadius: 8, padding: "12px", textAlign: "center" }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: "var(--success)" }}>{passedCount}</div>
                   <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Passed</div>
                 </div>
-                <div style={{ background: "#ef444415", borderRadius: 8, padding: "12px", textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--danger)" }}>{failedCount}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Failed</div>
+                <div style={{ background: "#3b82f615", borderRadius: 8, padding: "12px", textAlign: "center" }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: "#3b82f6" }}>{receivedCount}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Received</div>
                 </div>
               </div>
 

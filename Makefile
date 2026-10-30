@@ -1,14 +1,30 @@
-.PHONY: all core panel frontend backend clean test
+.PHONY: all core panel frontend backend clean test rust xdp-ebpf xdp-loader
 
 # ── Build All ──
-all: core panel
+all: l3 panel
 
-# ── Core (spoof binary with Rust FFI) ──
+l3:
+	CGO_ENABLED=0 go build -o spoof-l3 ./cmd/spoof-l3/
+
+# ── XDP/eBPF (kernel-side program, needs nightly) ──
+xdp-ebpf:
+	cd rust/xdp-ebpf && cargo +nightly build \
+		--target bpfel-unknown-none \
+		-Z build-std=core \
+		--release
+
+# ── XDP Loader (userspace, links into Go binary) ──
+xdp-loader: xdp-ebpf
+	cd rust/xdp-loader && cargo build --release
+
+# ── Core transport (existing Rust FFI) ──
 rust:
-	cd rust && cargo build --release
+	cd rust && cargo build --release -p spoof-transport
 
+# ── Core binary (Go + Rust FFI + XDP) ──
 core: rust
-	CGO_ENABLED=1 go build -o spoof ./cmd/spoof/
+	CGO_ENABLED=1 go build \
+				-o spoof ./cmd/spoof/
 
 # ── Panel (frontend + backend) ──
 panel: frontend backend
@@ -29,7 +45,7 @@ dev-backend:
 	cd panel/backend && CGO_ENABLED=0 go build -o ../../spoof-panel ./cmd/panel/
 
 # ── Test ──
-test: rust
+test: rust xdp-ebpf
 	cd rust && cargo test
 	CGO_ENABLED=1 go test ./internal/...
 	cd panel/backend && go vet ./...
@@ -37,6 +53,8 @@ test: rust
 # ── Clean ──
 clean:
 	cd rust && cargo clean
+	cd rust/xdp-ebpf && cargo clean 2>/dev/null || true
+	cd rust/xdp-loader && cargo clean 2>/dev/null || true
 	rm -f spoof spoof-panel
 	rm -rf panel/frontend/.next panel/frontend/out
 	rm -rf panel/backend/cmd/panel/web

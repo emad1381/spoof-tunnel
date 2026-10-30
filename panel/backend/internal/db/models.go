@@ -9,6 +9,7 @@ import (
 
 // User represents an admin user
 type User struct {
+	TokenVersion uint      `json:"-"`
 	ID           uint      `gorm:"primarykey" json:"id"`
 	Username     string    `gorm:"uniqueIndex;not null" json:"username"`
 	PasswordHash string    `gorm:"not null" json:"-"`
@@ -18,12 +19,20 @@ type User struct {
 
 // TunnelInstance represents a single tunnel configuration + runtime
 type TunnelInstance struct {
-	ID            uint      `gorm:"primarykey" json:"id"`
-	Name          string    `gorm:"not null" json:"name"`
-	Enabled       bool      `gorm:"default:false" json:"enabled"`
-	Mode          string    `gorm:"default:local" json:"mode"`
-	SendTransport string    `gorm:"default:tcp" json:"send_transport"`
-	RecvTransport string    `gorm:"default:udp" json:"recv_transport"`
+	ID            uint   `gorm:"primarykey" json:"id"`
+	Name          string `gorm:"not null" json:"name"`
+	Enabled       bool   `gorm:"default:false" json:"enabled"`
+	Mode          string `gorm:"default:local" json:"mode"`
+	SendTransport string `gorm:"default:tcp" json:"send_transport"`
+	RecvTransport string `gorm:"default:udp" json:"recv_transport"`
+
+	Engine       string `gorm:"default:udp-relay" json:"engine"`
+	LocalIP      string `json:"local_ip"`
+	TunInterface string `json:"tun_interface"`
+	TunAddress   string `json:"tun_address"`
+	TunPeer      string `json:"tun_peer"`
+	TunMTU       int    `json:"tun_mtu"`
+	PSK          string `json:"psk"`
 
 	// Local mode
 	ListenAddr string `gorm:"default:127.0.0.1:5000" json:"listen_addr"`

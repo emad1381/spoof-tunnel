@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/api"
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/auth"
@@ -39,7 +40,10 @@ func main() {
 	if os.Getenv("SPOOF_DATA_DIR") != "" {
 		dataDir = os.Getenv("SPOOF_DATA_DIR")
 	}
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		log.Fatal(err)
+	}
+	_ = os.Chmod(dataDir, 0700)
 
 	dbPath := filepath.Join(dataDir, "panel.db")
 	log.Printf("Database: %s", dbPath)
@@ -50,6 +54,8 @@ func main() {
 		log.Fatalf("Failed to init database: %v", err)
 	}
 
+	auth.SetSecret(getOrCreateSetting(database, "jwt_secret", func() string { return auth.GenerateRandomString(64) }))
+	_ = os.Chmod(dbPath, 0600)
 	// Handle setup mode
 	if *setup || *setupUser != "" {
 		runSetup(database, *setupUser, *setupPass, *setupPort)
@@ -74,6 +80,15 @@ func main() {
 
 	// Create API server — API is prefixed with /{webpath}/api
 	srv := api.NewServer(database, mgr, "/"+webPath)
+
+	// Auto-start enabled tunnels
+	var tunnels []db.TunnelInstance
+	if err := database.Where("enabled = ?", true).Find(&tunnels).Error; err == nil {
+		for _, t := range tunnels {
+			log.Printf("Auto-starting tunnel: %s", t.Name)
+			mgr.StartInstance(t.ID)
+		}
+	}
 
 	// Serve embedded frontend
 	webRoot, err := fs.Sub(webFS, "web")
@@ -152,7 +167,7 @@ func main() {
 		}
 
 		// Must start with /{webpath}
-		if !strings.HasPrefix(path, prefix) {
+		if path != prefix && !strings.HasPrefix(path, prefix+"/") {
 			c.String(http.StatusNotFound, "not found")
 			return
 		}
@@ -209,11 +224,12 @@ func main() {
 	addr := fmt.Sprintf("0.0.0.0:%d", listenPort)
 	fullURL := fmt.Sprintf("http://0.0.0.0:%d/%s/", listenPort, webPath)
 	log.Printf("╔══════════════════════════════════════════════════╗")
-	log.Printf("║         Spoof Panel v3.0.1                       ║")
+	log.Printf("║         EMAD Spoof Tunnel v0.1.0                       ║")
 	log.Printf("║  %-48s║", fullURL)
 	log.Printf("╚══════════════════════════════════════════════════╝")
 
-	if err := srv.Router().Run(addr); err != nil {
+	httpServer := &http.Server{Addr: addr, Handler: srv.Router(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
+	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
@@ -230,6 +246,14 @@ func getOrCreateSetting(database *gorm.DB, key string, defaultFn func() string) 
 }
 
 func runSetup(database *gorm.DB, username, password string, port int) {
+	var count int64
+	database.Model(&db.User{}).Count(&count)
+	if count > 0 {
+		log.Fatal("Already initialized; use the panel to change your password")
+	}
+	if password != "" && (len(password) < 12 || len(password) > 72) {
+		log.Fatal("Password must be 12–72 bytes")
+	}
 	if username == "" {
 		username = auth.GenerateRandomString(8)
 	}

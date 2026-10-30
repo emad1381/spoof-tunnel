@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ParsaKSH/spoof-tunnel/internal/l3"
 	"github.com/ParsaKSH/spoof-tunnel/internal/tester"
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/auth"
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/db"
@@ -26,42 +27,33 @@ func (s *Server) handleAuthCheck(c *gin.Context) {
 }
 
 func (s *Server) handleSetup(c *gin.Context) {
-	var count int64
-	s.db.Model(&db.User{}).Count(&count)
-	if count > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "already set up"})
-		return
-	}
-
-	var req struct {
-		Username string `json:"username" binding:"required"`
-		Password string `json:"password" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	hash, err := auth.HashPassword(req.Password)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "hash failed"})
-		return
-	}
-
-	user := db.User{
-		Username:     req.Username,
-		PasswordHash: hash,
-	}
-	if err := s.db.Create(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	token, _ := auth.GenerateToken(user.ID, user.Username)
-	c.JSON(http.StatusOK, gin.H{"token": token, "username": user.Username})
+	c.JSON(http.StatusForbidden, gin.H{"error": "Initialize the administrator on the server with spoof-panel --setup"})
 }
 
 func (s *Server) handleLogin(c *gin.Context) {
+	s.loginMu.Lock()
+	now := time.Now()
+	key := c.ClientIP()
+	for k, entries := range s.logins {
+		if len(entries) == 0 || now.Sub(entries[len(entries)-1]) > time.Minute {
+			delete(s.logins, k)
+		}
+	}
+	entries := s.logins[key]
+	fresh := entries[:0]
+	for _, entry := range entries {
+		if now.Sub(entry) < time.Minute {
+			fresh = append(fresh, entry)
+		}
+	}
+	if len(fresh) >= 10 || len(s.logins) >= 4096 {
+		s.loginMu.Unlock()
+		c.Header("Retry-After", "60")
+		c.JSON(429, gin.H{"error": "Too many login attempts; try again in a minute"})
+		return
+	}
+	s.logins[key] = append(fresh, now)
+	s.loginMu.Unlock()
 	var req struct {
 		Username string `json:"username" binding:"required"`
 		Password string `json:"password" binding:"required"`
@@ -85,7 +77,7 @@ func (s *Server) handleLogin(c *gin.Context) {
 	// Update last login
 	s.db.Model(&user).Update("last_login", time.Now())
 
-	token, err := auth.GenerateToken(user.ID, user.Username)
+	token, err := auth.GenerateToken(user.ID, user.Username, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "token generation failed"})
 		return
@@ -108,12 +100,14 @@ func (s *Server) handleDashboard(c *gin.Context) {
 	s.db.Find(&instances)
 
 	type instanceInfo struct {
-		ID     uint   `json:"id"`
-		Name   string `json:"name"`
-		Mode   string `json:"mode"`
-		Status string `json:"status"`
-		Uptime float64 `json:"uptime"`
-		Error  string `json:"error,omitempty"`
+		Engine    string   `json:"engine"`
+		Telemetry l3.Stats `json:"telemetry"`
+		ID        uint     `json:"id"`
+		Name      string   `json:"name"`
+		Mode      string   `json:"mode"`
+		Status    string   `json:"status"`
+		Uptime    float64  `json:"uptime"`
+		Error     string   `json:"error,omitempty"`
 	}
 
 	var items []instanceInfo
@@ -123,12 +117,14 @@ func (s *Server) handleDashboard(c *gin.Context) {
 		status, errMsg := s.manager.InstanceStatus(inst.ID)
 		uptime := s.manager.InstanceUptime(inst.ID)
 		items = append(items, instanceInfo{
-			ID:     inst.ID,
-			Name:   inst.Name,
-			Mode:   inst.Mode,
-			Status: string(status),
-			Uptime: uptime.Seconds(),
-			Error:  errMsg,
+			Engine:    inst.Engine,
+			Telemetry: s.manager.Telemetry(inst.ID),
+			ID:        inst.ID,
+			Name:      inst.Name,
+			Mode:      inst.Mode,
+			Status:    string(status),
+			Uptime:    uptime.Seconds(),
+			Error:     errMsg,
 		})
 		switch status {
 		case "running":
@@ -185,9 +181,9 @@ func (s *Server) handleListInstances(c *gin.Context) {
 		uptime := s.manager.InstanceUptime(inst.ID)
 		result = append(result, instanceWithStatus{
 			TunnelInstance: inst,
-			Status:        string(status),
-			Uptime:        uptime.Seconds(),
-			Error:         errMsg,
+			Status:         string(status),
+			Uptime:         uptime.Seconds(),
+			Error:          errMsg,
 		})
 	}
 
@@ -239,6 +235,10 @@ func (s *Server) handleCreateInstance(c *gin.Context) {
 		inst.ClientPort = 5001
 	}
 
+	if err := inst.Validate(); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	inst.ID = 0 // auto-increment
 	if err := s.db.Create(&inst).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -264,10 +264,11 @@ func (s *Server) handleGetInstance(c *gin.Context) {
 	uptime := s.manager.InstanceUptime(id)
 
 	c.JSON(http.StatusOK, gin.H{
-		"instance": inst,
-		"status":   string(status),
-		"uptime":   uptime.Seconds(),
-		"error":    errMsg,
+		"instance":  inst,
+		"status":    string(status),
+		"uptime":    uptime.Seconds(),
+		"telemetry": s.manager.Telemetry(id),
+		"error":     errMsg,
 	})
 }
 
@@ -283,13 +284,25 @@ func (s *Server) handleUpdateInstance(c *gin.Context) {
 		return
 	}
 
+	status, _ := s.manager.InstanceStatus(id)
+	if status == "running" || status == "stopping" {
+		c.JSON(409, gin.H{"error": "Stop the tunnel before editing its configuration"})
+		return
+	}
 	if err := c.ShouldBindJSON(&existing); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	existing.ID = id
-	s.db.Save(&existing)
+	if err := existing.Validate(); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.db.Save(&existing).Error; err != nil {
+		c.JSON(500, gin.H{"error": "save failed"})
+		return
+	}
 	c.JSON(http.StatusOK, existing)
 }
 
@@ -355,16 +368,15 @@ func (s *Server) handleInstanceStatus(c *gin.Context) {
 	}
 	status, errMsg := s.manager.InstanceStatus(id)
 	c.JSON(http.StatusOK, gin.H{
-		"status": string(status),
-		"error":  errMsg,
-		"uptime": s.manager.InstanceUptime(id).Seconds(),
+		"status":    string(status),
+		"error":     errMsg,
+		"uptime":    s.manager.InstanceUptime(id).Seconds(),
+		"telemetry": s.manager.Telemetry(id),
 	})
 }
 
 // WebSocket log streaming per instance
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
+var upgrader = websocket.Upgrader{}
 
 func (s *Server) handleInstanceLogs(c *gin.Context) {
 	id, err := parseID(c)
@@ -471,7 +483,8 @@ func (s *Server) handleTesterStart(c *gin.Context) {
 	var req struct {
 		Mode          string  `json:"mode" binding:"required"`
 		Protocol      string  `json:"protocol" binding:"required"`
-		IPList        string  `json:"ip_list" binding:"required"`
+		IPList        string  `json:"ip_list"`
+		FilePath      string  `json:"file_path"`
 		DstIP         string  `json:"dst_ip"`
 		DstPort       int     `json:"dst_port"`
 		Timeout       int     `json:"timeout"`
@@ -484,13 +497,30 @@ func (s *Server) handleTesterStart(c *gin.Context) {
 		return
 	}
 
-	srcIPs, err := tester.ParseIPListFromString(req.IPList)
+	var ranges *tester.IPRangeSet
+	var err error
+
+	if req.FilePath != "" {
+		f, errFile := os.Open(req.FilePath)
+		if errFile != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cannot open file path: " + errFile.Error()})
+			return
+		}
+		defer f.Close()
+		ranges, err = tester.ParseIPRangesFromReader(f)
+	} else if req.IPList != "" {
+		ranges, err = tester.ParseIPRangesFromString(req.IPList)
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "either ip_list or file_path must be provided"})
+		return
+	}
+
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid IP list: " + err.Error()})
 		return
 	}
 
-	if len(srcIPs) == 0 {
+	if ranges.Total() == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "IP list is empty"})
 		return
 	}
@@ -508,12 +538,12 @@ func (s *Server) handleTesterStart(c *gin.Context) {
 
 	switch req.Mode {
 	case "sender":
-		if err := s.tester.RunSender(cfg, srcIPs); err != nil {
+		if err := s.tester.RunSender(cfg, ranges); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 	case "receiver":
-		if err := s.tester.RunReceiver(cfg, srcIPs); err != nil {
+		if err := s.tester.RunReceiver(cfg, ranges); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -522,11 +552,18 @@ func (s *Server) handleTesterStart(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "started", "ip_count": len(srcIPs)})
+	c.JSON(http.StatusOK, gin.H{"status": "started", "ip_count": ranges.Total()})
 }
 
 func (s *Server) handleTesterStatus(c *gin.Context) {
 	state := s.tester.State()
+	// Load results: live during running receiver, from disk when done
+	if state.Status == "done" || (state.Status == "running" && state.Mode == "receiver") {
+		results, err := s.tester.Results()
+		if err == nil {
+			state.Results = results
+		}
+	}
 	c.JSON(http.StatusOK, state)
 }
 
@@ -537,27 +574,21 @@ func (s *Server) handleTesterStop(c *gin.Context) {
 
 func (s *Server) handleTesterResults(c *gin.Context) {
 	state := s.tester.State()
+	results, _ := s.tester.Results()
 	c.JSON(http.StatusOK, gin.H{
 		"status":  state.Status,
-		"results": state.Results,
+		"results": results,
 	})
 }
 
 func (s *Server) handleTesterDownload(c *gin.Context) {
-	state := s.tester.State()
-	if len(state.Results) == 0 {
+	passedIPs, err := s.tester.PassedIPs()
+	if err != nil || len(passedIPs) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no results"})
 		return
 	}
 
-	var lines []string
-	for _, r := range state.Results {
-		if r.Passed {
-			lines = append(lines, r.IP)
-		}
-	}
-
-	content := strings.Join(lines, "\n") + "\n"
+	content := strings.Join(passedIPs, "\n") + "\n"
 	c.Header("Content-Disposition", "attachment; filename=spoof-ips.txt")
 	c.Data(http.StatusOK, "text/plain", []byte(content))
 }
@@ -600,11 +631,23 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 		return
 	}
 
-	hash, _ := auth.HashPassword(req.NewPassword)
-	s.db.Model(&user).Update("password_hash", hash)
+	if len(req.NewPassword) < 12 || len(req.NewPassword) > 72 {
+		c.JSON(400, gin.H{"error": "Password must be 12–72 bytes"})
+		return
+	}
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "Invalid password"})
+		return
+	}
+	user.TokenVersion++
+	if err := s.db.Model(&user).Updates(map[string]interface{}{"password_hash": hash, "token_version": user.TokenVersion}).Error; err != nil {
+		c.JSON(500, gin.H{"error": "password update failed"})
+		return
+	}
 
 	// Generate new token
-	token, _ := auth.GenerateToken(user.ID, user.Username)
+	token, _ := auth.GenerateToken(user.ID, user.Username, user.TokenVersion)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "token": token})
 }
 
@@ -613,7 +656,10 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 func parseID(c *gin.Context) (uint, error) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
+	if err != nil || id == 0 {
+		if err == nil {
+			err = fmt.Errorf("invalid id")
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return 0, err
 	}

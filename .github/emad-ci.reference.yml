@@ -1,0 +1,28 @@
+name: EMAD build and test
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: panel/frontend/package-lock.json
+      - run: go test -race ./internal/l3
+      - run: go test -race ./internal/...
+        working-directory: panel/backend
+      - run: bash scripts/build.sh
+      - run: sudo python3 scripts/integration_l3.py
+        env:
+          EMAD_L3_BINARY: ${{ github.workspace }}/dist/spoof-l3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spoof-tunnel-linux-amd64
+          path: dist/

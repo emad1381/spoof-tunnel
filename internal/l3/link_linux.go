@@ -1,0 +1,331 @@
+//go:build linux
+
+package l3
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"os/exec"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
+)
+
+// PacketConn owns exactly one receive protocol and one raw send socket.
+type PacketConn struct {
+	cfg  Config
+	recv *net.IPConn
+	send int
+	mu   sync.Mutex
+}
+
+func NewPacketConn(c Config) (*PacketConn, error) {
+	recv, err := net.ListenIP(fmt.Sprintf("ip4:%d", Protocol(c.Receive)), &net.IPAddr{IP: net.ParseIP(c.LocalIP)})
+	if err != nil {
+		return nil, fmt.Errorf("receive raw socket: %w", err)
+	}
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
+	if err != nil {
+		recv.Close()
+		return nil, err
+	}
+	if err = syscall.SetsockoptInt(fd, syscall.IPPROTO_IP, syscall.IP_HDRINCL, 1); err != nil {
+		recv.Close()
+		syscall.Close(fd)
+		return nil, err
+	}
+	_ = recv.SetReadBuffer(4 * 1024 * 1024)
+	return &PacketConn{cfg: c, recv: recv, send: fd}, nil
+}
+func checksum(b []byte) uint16 {
+	var n uint32
+	for len(b) > 1 {
+		n += uint32(binary.BigEndian.Uint16(b))
+		b = b[2:]
+	}
+	if len(b) > 0 {
+		n += uint32(b[0]) << 8
+	}
+	for n>>16 != 0 {
+		n = (n & 65535) + (n >> 16)
+	}
+	return ^uint16(n)
+}
+func (p *PacketConn) Send(payload []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	proto := Protocol(p.cfg.Send)
+	extra := 0
+	switch proto {
+	case 1, 17:
+		extra = 8
+	case 6:
+		extra = 20
+	}
+	b := make([]byte, 20+extra+len(payload))
+	b[0] = 0x45
+	binary.BigEndian.PutUint16(b[2:4], uint16(len(b)))
+	b[8] = 64
+	b[9] = byte(proto)
+	copy(b[12:16], net.ParseIP(p.cfg.SpoofSource).To4())
+	copy(b[16:20], net.ParseIP(p.cfg.PeerIP).To4())
+	binary.BigEndian.PutUint16(b[10:12], checksum(b[:20]))
+	h := b[20 : 20+extra]
+	switch proto {
+	case 1:
+		h[0] = 8
+		binary.BigEndian.PutUint16(h[4:6], uint16(p.cfg.SendPort))
+	case 6:
+		binary.BigEndian.PutUint16(h[0:2], uint16(p.cfg.ReceivePort))
+		binary.BigEndian.PutUint16(h[2:4], uint16(p.cfg.SendPort))
+		h[12] = 5 << 4
+		h[13] = 0x18
+		binary.BigEndian.PutUint16(h[14:16], 65535)
+	case 17:
+		binary.BigEndian.PutUint16(h[0:2], uint16(p.cfg.ReceivePort))
+		binary.BigEndian.PutUint16(h[2:4], uint16(p.cfg.SendPort))
+		binary.BigEndian.PutUint16(h[4:6], uint16(extra+len(payload)))
+	}
+	copy(b[20+extra:], payload)
+	switch proto {
+	case 1:
+		binary.BigEndian.PutUint16(h[2:4], checksum(b[20:]))
+	case 6, 17:
+		pseudo := make([]byte, 12+len(b)-20)
+		copy(pseudo[:8], b[12:20])
+		pseudo[9] = byte(proto)
+		binary.BigEndian.PutUint16(pseudo[10:12], uint16(len(b)-20))
+		copy(pseudo[12:], b[20:])
+		sum := checksum(pseudo)
+		if sum == 0 {
+			sum = 65535
+		}
+		off := 6
+		if proto == 6 {
+			off = 16
+		}
+		binary.BigEndian.PutUint16(h[off:off+2], sum)
+	}
+	var dst [4]byte
+	copy(dst[:], b[16:20])
+	return syscall.Sendto(p.send, b, 0, &syscall.SockaddrInet4{Addr: dst})
+}
+func (p *PacketConn) Receive() ([]byte, error) {
+	b := make([]byte, 65535)
+	for {
+		n, addr, err := p.recv.ReadFromIP(b)
+		if err != nil {
+			return nil, err
+		}
+		if !addr.IP.Equal(net.ParseIP(p.cfg.PeerSpoof)) {
+			continue
+		}
+		data := b[:n]
+		proto := Protocol(p.cfg.Receive)
+		// net.IPConn strips the outer IPv4 header. Parse only the carrier header.
+		switch proto {
+		case 1:
+			if len(data) < 8 || data[0] != 8 || data[1] != 0 || int(binary.BigEndian.Uint16(data[4:6])) != p.cfg.ReceivePort || checksum(data) != 0 {
+				continue
+			}
+			data = data[8:]
+		case 6:
+			if len(data) < 20 || int(binary.BigEndian.Uint16(data[2:4])) != p.cfg.ReceivePort {
+				continue
+			}
+			h := int(data[12]>>4) * 4
+			if h < 20 || h > len(data) {
+				continue
+			}
+			data = data[h:]
+		case 17:
+			if len(data) < 8 || int(binary.BigEndian.Uint16(data[2:4])) != p.cfg.ReceivePort {
+				continue
+			}
+			length := int(binary.BigEndian.Uint16(data[4:6]))
+			if length < 8 || length > len(data) {
+				continue
+			}
+			data = data[8:length]
+		}
+		if len(data) > 0 {
+			return append([]byte(nil), data...), nil
+		}
+	}
+}
+func (p *PacketConn) Close() { p.recv.Close(); p.mu.Lock(); defer p.mu.Unlock(); syscall.Close(p.send) }
+
+func openTun(c Config) (*os.File, error) {
+	fd, err := syscall.Open("/dev/net/tun", syscall.O_RDWR|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	var req [40]byte
+	copy(req[:16], c.Interface)
+	*(*uint16)(unsafe.Pointer(&req[16])) = 0x0001 | 0x1000 | 0x8000 // TUN, NO_PI, exclusive
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), 0x400454ca, uintptr(unsafe.Pointer(&req[0])))
+	if errno != 0 {
+		syscall.Close(fd)
+		return nil, fmt.Errorf("create exclusive TUN %s: %w", c.Interface, errno)
+	}
+	f := os.NewFile(uintptr(fd), "/dev/net/tun")
+	for _, args := range [][]string{{"address", "add", c.Address, "dev", c.Interface}, {"link", "set", "dev", c.Interface, "mtu", fmt.Sprint(c.MTU), "up"}} {
+		if out, err := exec.Command("ip", args...).CombinedOutput(); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("configure TUN: %s: %w", out, err)
+		}
+	}
+	return f, nil
+}
+
+type Stats struct {
+	Event    string `json:"event"`
+	Peer     bool   `json:"peer_connected"`
+	TX       uint64 `json:"tx_bytes"`
+	RX       uint64 `json:"rx_bytes"`
+	Drops    uint64 `json:"drops"`
+	LastPeer int64  `json:"last_peer"`
+}
+
+// Run carries IPv4 packets, plus authenticated challenge/response heartbeats.
+func Run(ctx context.Context, c Config) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	codec, err := NewCodec(c.PSK, c.Role)
+	if err != nil {
+		return err
+	}
+	conn, err := NewPacketConn(c)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	tun, err := openTun(c)
+	if err != nil {
+		return err
+	}
+	defer tun.Close()
+	var mu sync.Mutex
+	stats := Stats{Event: "emad_stats"}
+	var challenge [16]byte
+	var pending bool
+	emit := func() {
+		mu.Lock()
+		s := stats
+		s.Peer = s.LastPeer > time.Now().Add(-15*time.Second).Unix()
+		mu.Unlock()
+		b, _ := json.Marshal(s)
+		log.Print(string(b))
+	}
+	errCh := make(chan error, 2)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			tun.Close()
+			conn.recv.Close()
+		case <-done:
+		}
+	}()
+	go func() {
+		b := make([]byte, 65535)
+		for {
+			n, err := tun.Read(b)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if n < 20 || b[0]>>4 != 4 || n > c.MTU {
+				mu.Lock()
+				stats.Drops++
+				mu.Unlock()
+				continue
+			}
+			err = conn.Send(codec.Seal(1, b[:n]))
+			mu.Lock()
+			if err == nil {
+				stats.TX += uint64(n)
+			} else {
+				stats.Drops++
+			}
+			mu.Unlock()
+		}
+	}()
+	go func() {
+		for {
+			frame, err := conn.Receive()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			kind, data, err := codec.Open(frame)
+			if err != nil {
+				mu.Lock()
+				stats.Drops++
+				mu.Unlock()
+				continue
+			}
+			switch kind {
+			case 1:
+				if len(data) < 20 || len(data) > c.MTU || data[0]>>4 != 4 || int(binary.BigEndian.Uint16(data[2:4])) != len(data) {
+					continue
+				}
+				if _, err = tun.Write(data); err != nil {
+					errCh <- err
+					return
+				}
+				mu.Lock()
+				stats.RX += uint64(len(data))
+				mu.Unlock()
+			case 2:
+				if len(data) == 16 {
+					_ = conn.Send(codec.Seal(3, data))
+				}
+			case 3:
+				mu.Lock()
+				if pending && len(data) == 16 && string(data) == string(challenge[:]) {
+					stats.LastPeer = time.Now().Unix()
+					pending = false
+				}
+				mu.Unlock()
+			}
+		}
+	}()
+	log.Printf("TUN ready: interface=%s address=%s peer=%s carrier=%s/%s", c.Interface, c.Address, c.PeerAddress, c.Send, c.Receive)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-errCh:
+			if ctx.Err() != nil || errors.Is(err, os.ErrClosed) {
+				return nil
+			}
+			return err
+		case <-ticker.C:
+			mu.Lock()
+			_, err = rand.Read(challenge[:])
+			pending = true
+			payload := append([]byte(nil), challenge[:]...)
+			mu.Unlock()
+			if err != nil {
+				return err
+			}
+			if err = conn.Send(codec.Seal(2, payload)); err != nil {
+				log.Printf("heartbeat send: %v", err)
+			}
+			emit()
+		}
+	}
+}

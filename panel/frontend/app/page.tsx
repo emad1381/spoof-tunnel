@@ -1,10 +1,10 @@
 "use client";
 import { useEffect } from "react";
-import { getBasePath } from "@/lib/basepath";
+import { useBasePath } from "@/lib/basepath";
 
 export default function Home() {
   useEffect(() => {
-    const base = getBasePath();
+    const base = useBasePath();
     const token = localStorage.getItem("token");
     if (token) {
       window.location.href = base + "/dashboard";

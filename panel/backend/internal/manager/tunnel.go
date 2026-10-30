@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ParsaKSH/spoof-tunnel/internal/l3"
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/db"
 	"gorm.io/gorm"
 )
@@ -24,6 +25,7 @@ const (
 	StatusStopped  TunnelStatus = "stopped"
 	StatusRunning  TunnelStatus = "running"
 	StatusStarting TunnelStatus = "starting"
+	StatusStopping TunnelStatus = "stopping"
 	StatusError    TunnelStatus = "error"
 )
 
@@ -31,6 +33,8 @@ const (
 type Instance struct {
 	ID        uint
 	cmd       *exec.Cmd
+	done      chan struct{}
+	telemetry l3.Stats
 	status    TunnelStatus
 	error     string
 	mu        sync.Mutex
@@ -40,9 +44,9 @@ type Instance struct {
 	startTime time.Time
 
 	// Log broadcasting to multiple WebSocket subscribers
-	subMu   sync.Mutex
-	subID   int
-	subs    map[int]chan string
+	subMu sync.Mutex
+	subID int
+	subs  map[int]chan string
 }
 
 func newInstance(id uint) *Instance {
@@ -100,7 +104,7 @@ func (m *Manager) StartInstance(id uint) error {
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 
-	if inst.status == StatusRunning {
+	if inst.cmd != nil {
 		return fmt.Errorf("instance %d already running", id)
 	}
 
@@ -108,6 +112,10 @@ func (m *Manager) StartInstance(id uint) error {
 	var cfg db.TunnelInstance
 	if err := m.db.First(&cfg, id).Error; err != nil {
 		return fmt.Errorf("instance %d not found: %w", id, err)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return err
 	}
 
 	// Generate config file
@@ -128,25 +136,33 @@ func (m *Manager) StartInstance(id uint) error {
 	inst.status = StatusStarting
 
 	// Start the binary
-	inst.cmd = exec.Command(m.binaryPath, "run", "--config", configPath)
+	if cfg.Engine == "tun" {
+		inst.cmd = exec.Command(filepath.Join(filepath.Dir(m.binaryPath), "spoof-l3"), "--config", configPath)
+	} else {
+		inst.cmd = exec.Command(m.binaryPath, "run", "--config", configPath)
+	}
+	inst.telemetry = l3.Stats{}
 	inst.cmd.Env = append(os.Environ(), "GODEBUG=madvdontneed=1")
 
 	stdout, err := inst.cmd.StdoutPipe()
 	if err != nil {
 		inst.status = StatusError
 		inst.error = err.Error()
+		inst.cmd = nil
 		return err
 	}
 	stderr, err := inst.cmd.StderrPipe()
 	if err != nil {
 		inst.status = StatusError
 		inst.error = err.Error()
+		inst.cmd = nil
 		return err
 	}
 
 	if err := inst.cmd.Start(); err != nil {
 		inst.status = StatusError
 		inst.error = err.Error()
+		inst.cmd = nil
 		return err
 	}
 
@@ -162,16 +178,24 @@ func (m *Manager) StartInstance(id uint) error {
 	go streamLogs(inst, stdout)
 	go streamLogs(inst, stderr)
 
+	cmd := inst.cmd
+	inst.done = make(chan struct{})
+	done := inst.done
 	go func() {
-		err := inst.cmd.Wait()
+		err := cmd.Wait()
 		inst.mu.Lock()
-		if inst.status == StatusRunning {
+		if inst.cmd == cmd {
+			inst.cmd = nil
+			if inst.status == StatusStopping {
+				err = nil
+			}
 			inst.status = StatusStopped
 			if err != nil {
 				inst.status = StatusError
 				inst.error = err.Error()
 			}
 		}
+		close(done)
 		inst.mu.Unlock()
 	}()
 
@@ -183,22 +207,39 @@ func (m *Manager) StartInstance(id uint) error {
 func (m *Manager) StopInstance(id uint) error {
 	inst := m.getInstance(id)
 	inst.mu.Lock()
-	defer inst.mu.Unlock()
-
 	if inst.cmd == nil || inst.cmd.Process == nil {
 		inst.status = StatusStopped
+		inst.mu.Unlock()
 		return nil
 	}
-
-	inst.status = StatusStopped
-	log.Printf("[manager] stopping instance %d", id)
-	return inst.cmd.Process.Kill()
+	inst.status = StatusStopping
+	process, done := inst.cmd.Process, inst.done
+	inst.mu.Unlock()
+	// SIGTERM lets the core release raw sockets and restore kernel settings.
+	err := process.Signal(os.Interrupt)
+	if err != nil && err != os.ErrProcessDone {
+		_ = process.Kill()
+	}
+	select {
+	case <-done:
+		return nil
+	case <-time.After(5 * time.Second):
+		if err := process.Kill(); err != nil && err != os.ErrProcessDone {
+			return err
+		}
+	}
+	select {
+	case <-done:
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("process did not exit")
+	}
 }
 
-// RestartInstance restarts a tunnel instance
 func (m *Manager) RestartInstance(id uint) error {
-	m.StopInstance(id)
-	time.Sleep(500 * time.Millisecond)
+	if err := m.StopInstance(id); err != nil {
+		return err
+	}
 	return m.StartInstance(id)
 }
 
@@ -377,13 +418,19 @@ func (m *Manager) generateConfig(cfg db.TunnelInstance) (string, error) {
 		tunnelCfg["client_port"] = cfg.ClientPort
 	}
 
-	data, err := json.MarshalIndent(tunnelCfg, "", "  ")
+	var value interface{} = tunnelCfg
+	if cfg.Engine == "tun" {
+		value = cfg.L3Config()
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return "", err
 	}
 
 	configPath := m.configFilePath(cfg.ID)
-	os.MkdirAll(filepath.Dir(configPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0700); err != nil {
+		return "", err
+	}
 
 	log.Printf("[manager] writing config for instance %d to %s", cfg.ID, configPath)
 	return configPath, os.WriteFile(configPath, data, 0600)
@@ -391,10 +438,18 @@ func (m *Manager) generateConfig(cfg db.TunnelInstance) (string, error) {
 
 func streamLogs(inst *Instance, reader io.Reader) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 4096), 4096)
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		if pos := strings.Index(line, `{"event":"emad_stats"`); pos >= 0 {
+			var stats l3.Stats
+			if json.Unmarshal([]byte(line[pos:]), &stats) == nil {
+				inst.mu.Lock()
+				inst.telemetry = stats
+				inst.mu.Unlock()
+			}
+		}
 
 		inst.logMu.Lock()
 		inst.logLines = append(inst.logLines, line)
@@ -413,4 +468,13 @@ func streamLogs(inst *Instance, reader io.Reader) {
 		}
 		inst.subMu.Unlock()
 	}
+}
+
+func (m *Manager) Telemetry(id uint) l3.Stats {
+	inst := m.getInstance(id)
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+	s := inst.telemetry
+	s.Peer = inst.status == StatusRunning && s.LastPeer > time.Now().Add(-15*time.Second).Unix()
+	return s
 }

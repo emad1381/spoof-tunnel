@@ -1,8 +1,10 @@
 package relay
 
 import (
+	"errors"
 	"log"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,13 +23,16 @@ type LocalConfig struct {
 	PeerSpoofIP   net.IP
 	SendTransport string // "tcp", "udp", "icmp", "icmpv6"
 	RecvTransport string // "tcp", "udp", "icmp", "icmpv6"
+	XDPInterface  string // network interface for XDP (empty = disabled)
 }
 
 type Local struct {
-	cfg     LocalConfig
-	udpConn *net.UDPConn
-	sender  transport.Sender
-	recver  transport.Receiver
+	cfg       LocalConfig
+	done      chan struct{}
+	closeOnce sync.Once
+	udpConn   *net.UDPConn
+	sender    transport.Sender
+	recver    transport.Receiver
 
 	lastAppAddr atomic.Pointer[net.UDPAddr]
 
@@ -89,9 +94,11 @@ func NewLocal(cfg LocalConfig) (*Local, error) {
 	}
 
 	recver, err := transport.NewReceiver(cfg.RecvTransport, transport.ReceiverConfig{
-		ListenPort:  cfg.RecvPort,
-		PeerSpoofIP: cfg.PeerSpoofIP,
-		BufferSize:  4 * 1024 * 1024,
+		ListenPort:   cfg.RecvPort,
+		PeerSpoofIP:  cfg.PeerSpoofIP,
+		BufferSize:   4 * 1024 * 1024,
+		UseXDP:       cfg.XDPInterface != "",
+		XDPInterface: cfg.XDPInterface,
 	})
 	if err != nil {
 		udpConn.Close()
@@ -104,6 +111,7 @@ func NewLocal(cfg LocalConfig) (*Local, error) {
 
 	return &Local{
 		cfg:            cfg,
+		done:           make(chan struct{}),
 		udpConn:        udpConn,
 		sender:         sender,
 		recver:         recver,
@@ -122,6 +130,9 @@ func (l *Local) uplinkLoop() {
 	for {
 		n, addr, err := l.udpConn.ReadFromUDP(buf)
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			continue
 		}
 		if n == 0 {
@@ -160,20 +171,28 @@ func (l *Local) downlinkLoop() {
 func (l *Local) statsLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		log.Printf("[local] stats: up=%d pkts (%s) | down=%d pkts (%s)",
-			l.upPkts.Load(), formatBytes(l.up.Load()),
-			l.downPkts.Load(), formatBytes(l.down.Load()))
+	for {
+		select {
+		case <-l.done:
+			return
+		case <-ticker.C:
+			log.Printf("[local] stats: up=%d pkts (%s) | down=%d pkts (%s)",
+				l.upPkts.Load(), formatBytes(l.up.Load()),
+				l.downPkts.Load(), formatBytes(l.down.Load()))
+		}
 	}
 }
 
 func (l *Local) Close() {
-	l.udpConn.Close()
-	l.sender.Close()
-	l.recver.Close()
-	if l.icmpSuppressed {
-		restoreICMPEchoReply()
-	}
+	l.closeOnce.Do(func() {
+		close(l.done)
+		l.udpConn.Close()
+		l.sender.Close()
+		l.recver.Close()
+		if l.icmpSuppressed {
+			restoreICMPEchoReply()
+		}
+	})
 }
 
 func (l *Local) Stats() (up, down uint64) {

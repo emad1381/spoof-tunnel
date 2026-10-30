@@ -1,8 +1,10 @@
 package relay
 
 import (
+	"errors"
 	"log"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,14 +23,17 @@ type RemoteConfig struct {
 	PeerSpoofIP   net.IP
 	SendTransport string // "tcp", "udp", "icmp", "icmpv6"
 	RecvTransport string // "tcp", "udp", "icmp", "icmpv6"
+	XDPInterface  string // network interface for XDP (empty = disabled)
 }
 
 type Remote struct {
-	cfg     RemoteConfig
-	recver  transport.Receiver
-	sender  transport.Sender
-	udpConn *net.UDPConn
-	fwdAddr *net.UDPAddr
+	cfg       RemoteConfig
+	done      chan struct{}
+	closeOnce sync.Once
+	recver    transport.Receiver
+	sender    transport.Sender
+	udpConn   *net.UDPConn
+	fwdAddr   *net.UDPAddr
 
 	up       atomic.Uint64
 	down     atomic.Uint64
@@ -54,9 +59,11 @@ func NewRemote(cfg RemoteConfig) (*Remote, error) {
 	}
 
 	recver, err := transport.NewReceiver(cfg.RecvTransport, transport.ReceiverConfig{
-		ListenPort:  cfg.ListenPort,
-		PeerSpoofIP: cfg.PeerSpoofIP,
-		BufferSize:  4 * 1024 * 1024,
+		ListenPort:   cfg.ListenPort,
+		PeerSpoofIP:  cfg.PeerSpoofIP,
+		BufferSize:   4 * 1024 * 1024,
+		UseXDP:       cfg.XDPInterface != "",
+		XDPInterface: cfg.XDPInterface,
 	})
 	if err != nil {
 		if icmpSuppressed {
@@ -105,6 +112,7 @@ func NewRemote(cfg RemoteConfig) (*Remote, error) {
 
 	return &Remote{
 		cfg:            cfg,
+		done:           make(chan struct{}),
 		recver:         recver,
 		sender:         sender,
 		udpConn:        udpConn,
@@ -141,6 +149,9 @@ func (r *Remote) downlinkLoop() {
 	for {
 		n, _, err := r.udpConn.ReadFromUDP(buf)
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			continue
 		}
 		if n == 0 {
@@ -157,20 +168,28 @@ func (r *Remote) downlinkLoop() {
 func (r *Remote) statsLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		log.Printf("[remote] stats: up=%d pkts (%s) | down=%d pkts (%s)",
-			r.upPkts.Load(), formatBytes(r.up.Load()),
-			r.downPkts.Load(), formatBytes(r.down.Load()))
+	for {
+		select {
+		case <-r.done:
+			return
+		case <-ticker.C:
+			log.Printf("[remote] stats: up=%d pkts (%s) | down=%d pkts (%s)",
+				r.upPkts.Load(), formatBytes(r.up.Load()),
+				r.downPkts.Load(), formatBytes(r.down.Load()))
+		}
 	}
 }
 
 func (r *Remote) Close() {
-	r.recver.Close()
-	r.sender.Close()
-	r.udpConn.Close()
-	if r.icmpSuppressed {
-		restoreICMPEchoReply()
-	}
+	r.closeOnce.Do(func() {
+		close(r.done)
+		r.recver.Close()
+		r.sender.Close()
+		r.udpConn.Close()
+		if r.icmpSuppressed {
+			restoreICMPEchoReply()
+		}
+	})
 }
 
 func (r *Remote) Stats() (up, down uint64) {

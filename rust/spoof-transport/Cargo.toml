@@ -1,0 +1,15 @@
+[package]
+name = "spoof-transport"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[features]
+default = []
+xdp = ["dep:xdp-loader"]
+
+[dependencies]
+libc = "0.2"
+xdp-loader = { path = "../xdp-loader", optional = true }

@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import Link from "@/lib/link";
 import { api } from "@/lib/api";
-import { getBasePath } from "@/lib/basepath";
+import { useBasePath } from "@/lib/basepath";
 
 interface Instance {
   id: number;
@@ -34,7 +34,7 @@ export default function TunnelsPage() {
   const [newName, setNewName] = useState("");
   const [newMode, setNewMode] = useState("local");
   const [actionLoading, setActionLoading] = useState<number | null>(null);
-  const basePath = getBasePath();
+  const basePath = useBasePath();
 
   const fetchInstances = async () => {
     try {
@@ -50,16 +50,10 @@ export default function TunnelsPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    try {
-      await api.createInstance({ name: newName, mode: newMode });
-      setShowCreate(false);
-      setNewName("");
-      fetchInstances();
-    } catch (e: any) {
-      alert(e.message);
-    }
+  const handleCreate = () => { window.location.href = basePath + "/dashboard/pair"; };
+  const importFile = async (file: File) => {
+    try { const config = JSON.parse(await file.text()); delete config.id; delete config.created_at; delete config.updated_at; await api.createInstance(config); await fetchInstances(); }
+    catch(e) { alert(e instanceof Error ? e.message : "Invalid configuration"); }
   };
 
   const handleAction = async (id: number, action: "start" | "stop" | "restart") => {
@@ -90,9 +84,10 @@ export default function TunnelsPage() {
 
   return (
     <div>
+<label className="btn btn-ghost" style={{marginBottom:20}}>ورود فایل تنظیمات<input type="file" accept=".json" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void importFile(f);e.target.value=""}}/></label>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
         <h1 style={{ fontSize: 28, fontWeight: 700 }}>🔗 Tunnels</h1>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+        <button className="btn btn-primary" onClick={() => { window.location.href=basePath+"/dashboard/pair"; }}>
           + New Tunnel
         </button>
       </div>
@@ -127,7 +122,7 @@ export default function TunnelsPage() {
           <div style={{ fontSize: 48, marginBottom: 16 }}>🔗</div>
           <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>No Tunnels Yet</h3>
           <p style={{ color: "var(--text-secondary)", marginBottom: 20 }}>Create your first tunnel instance to get started.</p>
-          <button className="btn btn-primary" onClick={() => setShowCreate(true)}>+ Create Tunnel</button>
+          <button className="btn btn-primary" onClick={() => { window.location.href=basePath+"/dashboard/pair"; }}>+ Create Tunnel</button>
         </div>
       )}
 

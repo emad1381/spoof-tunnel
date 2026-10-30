@@ -32,7 +32,7 @@ async function request(path: string, options: RequestInit = {}): Promise<any> {
   
   if (res.status === 401) {
     clearToken();
-    if (typeof window !== 'undefined') window.location.href = '/login';
+    if (typeof window !== 'undefined') window.location.href = getBasePath() + '/login';
     throw new Error('Unauthorized');
   }
   
@@ -71,6 +71,8 @@ export const api = {
   getInstanceSpoofIPs: (id: number) => request(`/instances/${id}/spoof-ips`),
   setInstanceSpoofIPs: (id: number, content: string) =>
     request(`/instances/${id}/spoof-ips`, { method: 'PUT', body: JSON.stringify({ content }) }),
+
+  pair: (data: unknown) => request('/pairs', {method: 'POST', body: JSON.stringify(data)}),
 
   // Tester
   testerStart: (data: any) => request('/tester/start', { method: 'POST', body: JSON.stringify(data) }),

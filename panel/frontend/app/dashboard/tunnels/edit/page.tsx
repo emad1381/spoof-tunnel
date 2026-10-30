@@ -2,7 +2,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { getBasePath } from "@/lib/basepath";
+import { useBasePath } from "@/lib/basepath";
 
 const TRANSPORT_OPTIONS = [
   { value: "tcp", label: "TCP (SYN)" },
@@ -15,7 +15,7 @@ function EditContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const id = Number(searchParams.get("id"));
-  const basePath = getBasePath();
+  const basePath = useBasePath();
 
   const [config, setConfig] = useState<any>(null);
   const [status, setStatus] = useState("stopped");
@@ -124,6 +124,8 @@ function EditContent() {
 
   const isLocal = config.mode === "local";
 
+  if (config?.engine === "tun") return <div dir="rtl" className="emad-page"><div className="eyebrow">TUN CONNECTION</div><h1>{config.name}</h1><label><input type="checkbox" checked={!!config.enabled} onChange={e=>setConfig({...config,enabled:e.target.checked})}/> شروع خودکار با پنل</label><p className="page-intro">{status} · {statusError || "برای فعال شدن تغییرات، پس از ذخیره تونل را راه‌اندازی مجدد کن."}</p><div className="glass-card"><div className="field-grid">{([ ["name","نام"],["local_ip","IP واقعی همین سرور"],[config.mode==="local"?"remote_addr":"client_ip","IP واقعی طرف مقابل"],["spoof_ip","مبدأ جعلی همین سمت"],["peer_spoof_ip","مبدأ جعلی طرف مقابل"],["tun_interface","نام رابط TUN"],["tun_address","آدرس داخلی / prefix"],["tun_peer","آدرس داخلی طرف مقابل"]] as const).map(([key,label])=><label key={key}>{label}<input className="input" dir="ltr" value={config[key]||""} onChange={e=>setConfig({...config,[key]:e.target.value})}/></label>)}{(["send_transport","recv_transport"] as const).map(key=><label key={key}>{key==="send_transport"?"حامل ارسال":"حامل دریافت"}<select className="input" value={config[key]} onChange={e=>setConfig({...config,[key]:e.target.value})}>{["icmp","tcp","udp","ipip","experimental"].map(t=><option key={t}>{t}</option>)}</select></label>)}{["tun_mtu",config.mode==="local"?"remote_port":"client_port",config.mode==="local"?"recv_port":"listen_port"].map(key=><label key={key}>{key}<input className="input" type="number" value={config[key]} onChange={e=>setConfig({...config,[key]:Number(e.target.value)})}/></label>)}</div><button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saved?"ذخیره شد":saving?"در حال ذخیره…":"ذخیره تنظیمات"}</button><button className="btn btn-ghost" onClick={()=>setActiveTab(activeTab==="logs"?"config":"logs")}>نمایش / بستن لاگ</button>{activeTab==="logs"&&<pre dir="ltr" style={{overflow:"auto",maxHeight:400}}>{logs.join("\n")||"هنوز لاگی ثبت نشده"}</pre>}</div></div>;
+
   return (
     <div>
       {/* Header */}
@@ -222,6 +224,42 @@ function EditContent() {
                   <select className="input" value={config.recv_transport} onChange={e => update("recv_transport", e.target.value)}>
                     {TRANSPORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
+                </div>
+
+                {/* XDP Section */}
+                <div style={{ padding: "12px", background: "var(--bg-card-hover)", borderRadius: 8, border: "1px solid var(--border)" }}>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>
+                      eBPF / XDP Acceleration (Linux only)
+                    </label>
+                    <select
+                      className="input"
+                      value={config.xdp_interface ? "xdp" : "noxdp"}
+                      onChange={e => {
+                        if (e.target.value === "noxdp") update("xdp_interface", "");
+                        else update("xdp_interface", "eth0");
+                      }}
+                    >
+                      <option value="noxdp">Disabled (Standard Raw Sockets)</option>
+                      <option value="xdp">Enabled (Kernel-Bypass)</option>
+                    </select>
+                  </div>
+                  {config.xdp_interface !== undefined && config.xdp_interface !== "" && (
+                    <div>
+                      <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>
+                        Network Interface (e.g. eth0, ens3)
+                      </label>
+                      <input
+                        className="input"
+                        value={config.xdp_interface}
+                        onChange={e => update("xdp_interface", e.target.value)}
+                        placeholder="eth0"
+                      />
+                      <p style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 6 }}>
+                        Drastically improves receive performance. Requires root and Linux kernel ≥ 5.8.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

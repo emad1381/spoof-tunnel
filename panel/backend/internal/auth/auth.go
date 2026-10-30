@@ -20,7 +20,9 @@ var jwtSecret []byte
 
 func init() {
 	jwtSecret = make([]byte, 32)
-	rand.Read(jwtSecret)
+	if _, err := rand.Read(jwtSecret); err != nil {
+		panic(err)
+	}
 }
 
 // SetSecret allows setting a persistent JWT secret
@@ -42,16 +44,22 @@ func CheckPassword(password, hash string) bool {
 
 // Claims for JWT
 type Claims struct {
-	UserID   uint   `json:"user_id"`
-	Username string `json:"username"`
+	TokenVersion uint   `json:"token_version"`
+	UserID       uint   `json:"user_id"`
+	Username     string `json:"username"`
 	jwt.RegisteredClaims
 }
 
 // GenerateToken creates a JWT token
-func GenerateToken(userID uint, username string) (string, error) {
+func GenerateToken(userID uint, username string, versions ...uint) (string, error) {
+	version := uint(0)
+	if len(versions) > 0 {
+		version = versions[0]
+	}
 	claims := &Claims{
-		UserID:   userID,
-		Username: username,
+		TokenVersion: version,
+		UserID:       userID,
+		Username:     username,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -66,7 +74,7 @@ func GenerateToken(userID uint, username string) (string, error) {
 func ValidateToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return jwtSecret, nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}
