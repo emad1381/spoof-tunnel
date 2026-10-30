@@ -1,18 +1,24 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 
 import "./globals.css";
-
-
+import "./theme.css";
 
 export const metadata: Metadata = {
   title: "EMAD · Spoof Tunnel",
-  description: "Spoof Tunnel Management Panel",
+  description: "پنل مدیریت تونل اسپوف احراز هویت‌شده",
+  robots: { index: false, follow: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#0a0a0f",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
-      <body >{children}</body>
+    <html lang="fa" dir="rtl" className="dark">
+      <body>{children}</body>
     </html>
   );
 }

@@ -7,22 +7,42 @@ import (
 	"regexp"
 )
 
+// Version is reported in logs and dashboards.
+const Version = "0.2.0"
+
 // Config describes one authenticated IPv4 point-to-point TUN link.
 type Config struct {
 	Role        string `json:"role"`
 	LocalIP     string `json:"local_ip"`
 	PeerIP      string `json:"peer_ip"`
 	SpoofSource string `json:"spoof_source"`
-	PeerSpoof   string `json:"peer_spoof"`
-	Send        string `json:"send"`
-	Receive     string `json:"receive"`
-	SendPort    int    `json:"send_port"`
-	ReceivePort int    `json:"receive_port"`
-	Interface   string `json:"interface"`
-	Address     string `json:"address"`
-	PeerAddress string `json:"peer_address"`
-	MTU         int    `json:"mtu"`
-	PSK         string `json:"psk"`
+	// SpoofSources optionally rotates the transmitted source address across
+	// several IPv4 addresses (round-robin, one per datagram). When empty the
+	// single SpoofSource is used.
+	SpoofSources []string `json:"spoof_sources,omitempty"`
+	PeerSpoof    string   `json:"peer_spoof"`
+	Send         string   `json:"send"`
+	Receive      string   `json:"receive"`
+	SendPort     int      `json:"send_port"`
+	ReceivePort  int      `json:"receive_port"`
+	Interface    string   `json:"interface"`
+	Address      string   `json:"address"`
+	PeerAddress  string   `json:"peer_address"`
+	MTU          int      `json:"mtu"`
+	PSK          string   `json:"psk"`
+}
+
+// Stats represents real-time telemetry from an authenticated TUN tunnel.
+type Stats struct {
+	Event     string  `json:"event"`
+	Peer      bool    `json:"peer_connected"`
+	TX        uint64  `json:"tx_bytes"`
+	RX        uint64  `json:"rx_bytes"`
+	TXPackets uint64  `json:"tx_packets"`
+	RXPackets uint64  `json:"rx_packets"`
+	Drops     uint64  `json:"drops"`
+	LastPeer  int64   `json:"last_peer"`
+	RTTMs     float64 `json:"rtt_ms,omitempty"`
 }
 
 var ifaceName = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,14}$`)
@@ -42,21 +62,61 @@ func Protocol(s string) int {
 	}
 	return 0
 }
+
+func unicast4(value string) (net.IP, bool) {
+	ip := net.ParseIP(value)
+	if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() {
+		return nil, false
+	}
+	return ip.To4(), true
+}
+
+// Sources returns the effective, de-duplicated list of spoof source addresses.
+func (c Config) Sources() ([]net.IP, error) {
+	raw := c.SpoofSources
+	if len(raw) == 0 {
+		if c.SpoofSource == "" {
+			return nil, fmt.Errorf("at least one spoof source address is required")
+		}
+		raw = []string{c.SpoofSource}
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]net.IP, 0, len(raw))
+	for _, value := range raw {
+		ip, ok := unicast4(value)
+		if !ok {
+			return nil, fmt.Errorf("spoof source %q must be a unicast IPv4 address", value)
+		}
+		key := ip.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, ip)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("at least one spoof source address is required")
+	}
+	if _, ok := seen[c.PeerSpoof]; ok {
+		return nil, fmt.Errorf("spoof source must differ from the peer spoof address")
+	}
+	return out, nil
+}
+
 func (c Config) Validate() error {
 	if c.Role != "local" && c.Role != "remote" {
 		return fmt.Errorf("role must be local or remote")
 	}
-	for _, v := range []string{c.LocalIP, c.PeerIP, c.SpoofSource, c.PeerSpoof} {
-		ip := net.ParseIP(v)
-		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() {
-			return fmt.Errorf("endpoint and spoof addresses must be unicast IPv4")
+	for _, v := range []string{c.LocalIP, c.PeerIP, c.PeerSpoof} {
+		if _, ok := unicast4(v); !ok {
+			return fmt.Errorf("endpoint and peer spoof addresses must be unicast IPv4")
 		}
 	}
 	if c.LocalIP == c.PeerIP {
 		return fmt.Errorf("real endpoints must differ")
 	}
-	if c.SpoofSource == c.PeerSpoof {
-		return fmt.Errorf("use distinct spoof source addresses")
+	if _, err := c.Sources(); err != nil {
+		return err
 	}
 	if Protocol(c.Send) == 0 || Protocol(c.Receive) == 0 {
 		return fmt.Errorf("unsupported carrier")

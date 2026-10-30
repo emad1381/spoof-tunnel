@@ -2,6 +2,9 @@
 import { useState } from "react";
 import { api, setToken } from "@/lib/api";
 
+const MIN = 12;
+const MAX = 72;
+
 export default function SettingsPage() {
   const [oldPass, setOldPass] = useState("");
   const [newPass, setNewPass] = useState("");
@@ -10,71 +13,106 @@ export default function SettingsPage() {
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleChangePassword = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setSuccess("");
-
+    if (newPass.length < MIN) {
+      setError(`رمز جدید باید حداقل ${MIN} کاراکتر باشد.`);
+      return;
+    }
+    if (newPass.length > MAX) {
+      setError(`رمز جدید حداکثر ${MAX} بایت است.`);
+      return;
+    }
     if (newPass !== confirm) {
-      setError("Passwords do not match");
+      setError("تکرار رمز جدید مطابق نیست.");
       return;
     }
-    if (newPass.length < 6) {
-      setError("Password must be at least 6 characters");
-      return;
-    }
-
     setLoading(true);
     try {
       const data = await api.changePassword(oldPass, newPass);
       if (data.token) setToken(data.token);
-      setSuccess("Password changed successfully!");
+      setSuccess("رمز عبور تغییر کرد و نشست‌های قبلی باطل شدند.");
       setOldPass("");
       setNewPass("");
       setConfirm("");
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "تغییر رمز ناموفق بود";
+      setError(msg === "wrong password" ? "رمز فعلی نادرست است." : msg);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 32 }}>Settings</h1>
+    <div className="page narrow">
+      <div className="page-head">
+        <div>
+          <div className="eyebrow">SECURITY / 04</div>
+          <h1>تنظیمات امنیتی</h1>
+          <p className="page-intro">تغییر رمز مدیر؛ با ذخیرهٔ رمز، همهٔ توکن‌های قبلی باطل می‌شوند.</p>
+        </div>
+      </div>
 
-      <div className="glass-card" style={{ maxWidth: 480 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 24 }}>Change Password</h2>
+      <section className="panel">
+        <h2>تغییر رمز عبور</h2>
+        {error && <div role="alert" className="banner error">{error}</div>}
+        {success && <div role="status" className="banner ok">{success}</div>}
 
-        {error && (
-          <div style={{ background: "#ef444420", border: "1px solid #ef4444", borderRadius: 8, padding: "10px 14px", marginBottom: 20, color: "#ef4444", fontSize: 13 }}>
-            {error}
-          </div>
-        )}
-        {success && (
-          <div style={{ background: "#22c55e20", border: "1px solid #22c55e", borderRadius: 8, padding: "10px 14px", marginBottom: 20, color: "#22c55e", fontSize: 13 }}>
-            {success}
-          </div>
-        )}
-
-        <form onSubmit={handleChangePassword} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div>
-            <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Current Password</label>
-            <input className="input" type="password" value={oldPass} onChange={(e) => setOldPass(e.target.value)} required />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>New Password</label>
-            <input className="input" type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} required />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Confirm New Password</label>
-            <input className="input" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
-          </div>
-          <button className="btn btn-primary" type="submit" disabled={loading} style={{ marginTop: 8 }}>
-            {loading ? "Changing..." : "Change Password"}
+        <form onSubmit={submit} className="stack">
+          <label className="field">
+            <span>رمز فعلی</span>
+            <input
+              className="input"
+              type="password"
+              value={oldPass}
+              onChange={(e) => setOldPass(e.target.value)}
+              autoComplete="current-password"
+              required
+              dir="ltr"
+            />
+          </label>
+          <label className="field">
+            <span>رمز جدید <small className="muted">({MIN} تا {MAX} کاراکتر)</small></span>
+            <input
+              className="input"
+              type="password"
+              value={newPass}
+              onChange={(e) => setNewPass(e.target.value)}
+              autoComplete="new-password"
+              minLength={MIN}
+              maxLength={MAX}
+              required
+              dir="ltr"
+            />
+          </label>
+          <label className="field">
+            <span>تکرار رمز جدید</span>
+            <input
+              className="input"
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+              required
+              dir="ltr"
+            />
+          </label>
+          <button className="btn btn-primary" type="submit" disabled={loading}>
+            {loading ? "در حال ذخیره…" : "ذخیرهٔ رمز جدید"}
           </button>
         </form>
-      </div>
+      </section>
+
+      <section className="panel">
+        <h2>یادآوری‌های امنیتی</h2>
+        <ul className="list">
+          <li>پنل روی HTTP سرو می‌شود؛ برای مدیریت از راه دور از reverse proxy با TLS یا SSH tunneling استفاده کن.</li>
+          <li>فایل خروجی اتصال حاوی PSK است؛ آن را فقط از کانال امن منتقل کن.</li>
+          <li>مسیر تصادفی پنل جای رمز را نمی‌گیرد و فقط یک لایهٔ کاهش نویز است.</li>
+        </ul>
+      </section>
     </div>
   );
 }

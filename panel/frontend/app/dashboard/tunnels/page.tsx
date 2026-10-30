@@ -1,13 +1,14 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "@/lib/link";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
 
-interface Instance {
+type Instance = {
   id: number;
   name: string;
   mode: string;
+  engine: string;
   status: string;
   uptime: number;
   status_error?: string;
@@ -15,180 +16,234 @@ interface Instance {
   recv_transport: string;
   remote_addr?: string;
   client_ip?: string;
+  tun_address?: string;
+  tun_peer?: string;
+  spoof_ip?: string;
+  peer_spoof_ip?: string;
+  remote_port?: number;
+  recv_port?: number;
+  listen_port?: number;
+  client_port?: number;
+  enabled: boolean;
+};
+
+type Telemetry = { peer_connected: boolean; tx_bytes: number; rx_bytes: number; rtt_ms?: number; drops: number };
+
+const LABEL: Record<string, string> = {
+  running: "در حال اجرا",
+  stopped: "متوقف",
+  starting: "در حال شروع",
+  stopping: "در حال توقف",
+  error: "خطا",
+};
+
+function size(n = 0) {
+  if (n < 1024) return `${n} B`;
+  const u = ["KB", "MB", "GB"];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(1)} ${u[i]}`;
 }
 
-function formatUptime(seconds: number): string {
-  if (seconds <= 0) return "—";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+function duration(s = 0) {
+  if (!s) return "—";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m`;
 }
 
 export default function TunnelsPage() {
   const [instances, setInstances] = useState<Instance[]>([]);
+  const [telemetry, setTelemetry] = useState<Record<number, Telemetry>>({});
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newMode, setNewMode] = useState("local");
-  const [actionLoading, setActionLoading] = useState<number | null>(null);
-  const basePath = useBasePath();
+  const [busy, setBusy] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const [toDelete, setToDelete] = useState<Instance | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const base = useBasePath();
 
-  const fetchInstances = async () => {
+  const load = useCallback(async () => {
     try {
-      const data = await api.listInstances();
-      setInstances(data);
-    } catch { }
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    fetchInstances();
-    const interval = setInterval(fetchInstances, 3000);
-    return () => clearInterval(interval);
+      const [list, dash] = await Promise.all([api.listInstances(), api.dashboard()]);
+      setInstances(list);
+      const map: Record<number, Telemetry> = {};
+      for (const d of dash.instances ?? []) if (d.telemetry) map[d.id] = d.telemetry;
+      setTelemetry(map);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "دریافت فهرست ناموفق بود");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const handleCreate = () => { window.location.href = basePath + "/dashboard/pair"; };
-  const importFile = async (file: File) => {
-    try { const config = JSON.parse(await file.text()); delete config.id; delete config.created_at; delete config.updated_at; await api.createInstance(config); await fetchInstances(); }
-    catch(e) { alert(e instanceof Error ? e.message : "Invalid configuration"); }
-  };
+  useEffect(() => {
+    load();
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, 4000);
+    return () => clearInterval(t);
+  }, [load]);
 
-  const handleAction = async (id: number, action: "start" | "stop" | "restart") => {
-    setActionLoading(id);
+  const action = async (id: number, kind: "start" | "stop" | "restart") => {
+    setBusy(id);
     try {
-      if (action === "start") await api.instanceStart(id);
-      else if (action === "stop") await api.instanceStop(id);
+      if (kind === "start") await api.instanceStart(id);
+      else if (kind === "stop") await api.instanceStop(id);
       else await api.instanceRestart(id);
-      setTimeout(fetchInstances, 800);
-    } catch (e: any) {
-      alert(e.message);
+      setTimeout(load, 600);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "عملیات ناموفق بود");
     } finally {
-      setActionLoading(null);
+      setBusy(null);
     }
   };
 
-  const handleDelete = async (id: number, name: string) => {
-    if (!confirm(`Delete tunnel "${name}"? This cannot be undone.`)) return;
+  const remove = async () => {
+    if (!toDelete) return;
     try {
-      await api.deleteInstance(id);
-      fetchInstances();
-    } catch (e: any) {
-      alert(e.message);
+      await api.deleteInstance(toDelete.id);
+      setToDelete(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "حذف ناموفق بود");
     }
   };
 
-  if (loading) return <div style={{ color: "var(--text-secondary)" }}>Loading...</div>;
+  const importFile = async (file: File) => {
+    try {
+      const config = JSON.parse(await file.text());
+      if (!config || typeof config !== "object") throw new Error("فایل JSON معتبر نیست.");
+      delete config.id;
+      delete config.created_at;
+      delete config.updated_at;
+      delete config.status;
+      delete config.uptime;
+      if (!config.name) config.name = file.name.replace(/\.json$/i, "");
+      await api.createInstance(config);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ورود تنظیمات ناموفق بود");
+    }
+  };
 
   return (
-    <div>
-<label className="btn btn-ghost" style={{marginBottom:20}}>ورود فایل تنظیمات<input type="file" accept=".json" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)void importFile(f);e.target.value=""}}/></label>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700 }}>🔗 Tunnels</h1>
-        <button className="btn btn-primary" onClick={() => { window.location.href=basePath+"/dashboard/pair"; }}>
-          + New Tunnel
-        </button>
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <div className="eyebrow">CONNECTIONS / 03</div>
+          <h1>اتصال‌ها</h1>
+          <p className="page-intro">هر اتصال یک رابط TUN و یک شبکهٔ داخلی مستقل دارد. قبل از ویرایش، پردازش را متوقف کن.</p>
+        </div>
+        <div className="row">
+          <button className="btn btn-ghost" onClick={() => fileRef.current?.click()}>
+            ورود فایل JSON
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void importFile(f);
+              e.target.value = "";
+            }}
+          />
+          <Link className="btn btn-primary" href={base + "/dashboard/pair"}>+ اتصال جدید</Link>
+        </div>
       </div>
 
-      {/* Create Modal */}
-      {showCreate && (
-        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 20 }}>Create Tunnel</h2>
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 4 }}>Name</label>
-              <input className="input" value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. DE Server" autoFocus />
-            </div>
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 4 }}>Mode</label>
-              <select className="input" value={newMode} onChange={e => setNewMode(e.target.value)}>
-                <option value="local">Local (Client)</option>
-                <option value="remote">Remote (Server)</option>
-              </select>
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleCreate}>Create</button>
-            </div>
-          </div>
+      {error && (
+        <div role="alert" className="banner error">
+          <span>{error}</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => setError("")}>بستن</button>
         </div>
       )}
 
-      {/* Empty State */}
-      {instances.length === 0 && (
-        <div className="glass-card" style={{ textAlign: "center", padding: 64 }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🔗</div>
-          <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>No Tunnels Yet</h3>
-          <p style={{ color: "var(--text-secondary)", marginBottom: 20 }}>Create your first tunnel instance to get started.</p>
-          <button className="btn btn-primary" onClick={() => { window.location.href=basePath+"/dashboard/pair"; }}>+ Create Tunnel</button>
+      {loading && <p className="muted">در حال دریافت…</p>}
+
+      {!loading && instances.length === 0 && (
+        <div className="empty panel">
+          <div className="empty-icon">🔗</div>
+          <h3>هنوز اتصالی ثبت نشده</h3>
+          <p>با «اتصال جدید» هر دو سمت را بساز، یا فایل JSON سمت مقابل را وارد کن.</p>
+          <Link className="btn btn-primary" href={base + "/dashboard/pair"}>ساخت اتصال دوطرفه</Link>
         </div>
       )}
 
-      {/* Instance Cards */}
-      <div style={{ display: "grid", gap: 16 }}>
-        {instances.map(inst => (
-          <div key={inst.id} className="glass-card instance-card" style={{ padding: "20px 24px" }}>
-            {/* Left */}
-            <div style={{ display: "flex", alignItems: "center", gap: 16, flex: 1 }}>
-              <div className={`status-dot ${inst.status}`} />
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                  <Link href={`${basePath}/dashboard/tunnels/edit?id=${inst.id}`} style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", textDecoration: "none" }}>
-                    {inst.name}
-                  </Link>
-                  <span style={{
-                    padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
-                    background: inst.mode === "local" ? "#6366f120" : "#22c55e20",
-                    color: inst.mode === "local" ? "#818cf8" : "#22c55e",
-                  }}>
-                    {inst.mode.toUpperCase()}
-                  </span>
+      <div className="cards">
+        {instances.map((i) => {
+          const t = telemetry[i.id];
+          const peer = i.engine === "tun" && !!t?.peer_connected;
+          const endpoint = i.mode === "local" ? i.remote_addr : i.client_ip;
+          return (
+            <article className="panel conn-card" key={i.id}>
+              <header className="conn-head">
+                <div className="row">
+                  <span className={`status-dot ${i.status}`} aria-hidden="true" />
+                  <div>
+                    <Link className="conn-title" href={`${base}/dashboard/tunnels/edit?id=${i.id}`}>{i.name}</Link>
+                    <div className="sub">
+                      <span className={`mode-badge ${i.mode}`}>{i.mode === "local" ? "ایران · local" : "خارج · remote"}</span>
+                      <span className="mono" dir="ltr">{i.send_transport} → {i.recv_transport}</span>
+                    </div>
+                  </div>
                 </div>
-                <div style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <span>Send: {inst.send_transport}</span>
-                  <span>Recv: {inst.recv_transport}</span>
-                  {inst.remote_addr && <span>Remote: {inst.remote_addr}</span>}
-                  {inst.client_ip && <span>Client: {inst.client_ip}</span>}
-                  {inst.status === "running" && <span style={{ color: "var(--success)" }}>⏱ {formatUptime(inst.uptime)}</span>}
-                </div>
-                {inst.status_error && (
-                  <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 4 }}>{inst.status_error}</div>
-                )}
+                <span className={`pill ${i.status}`}>{LABEL[i.status] || i.status}</span>
+              </header>
+
+              <div className="conn-grid">
+                <div><span className="k">طرف مقابل</span><span className="v mono" dir="ltr">{endpoint || "—"}</span></div>
+                <div><span className="k">شبکهٔ داخلی</span><span className="v mono" dir="ltr">{i.tun_address || "—"} → {i.tun_peer || "—"}</span></div>
+                <div><span className="k">مبدأ جعلی</span><span className="v mono" dir="ltr">{i.spoof_ip || "—"}</span></div>
+                <div><span className="k">پورت‌ها</span><span className="v mono" dir="ltr">{i.mode === "local" ? `${i.remote_port}/${i.recv_port}` : `${i.listen_port}/${i.client_port}`}</span></div>
               </div>
-            </div>
 
-            {/* Right */}
-            <div className="instance-actions">
-              {inst.status !== "running" ? (
-                <button className="btn btn-success" style={{ padding: "6px 14px", fontSize: 13 }}
-                  onClick={() => handleAction(inst.id, "start")} disabled={actionLoading === inst.id}>
-                  ▶ Start
-                </button>
-              ) : (
-                <>
-                  <button className="btn btn-danger" style={{ padding: "6px 14px", fontSize: 13 }}
-                    onClick={() => handleAction(inst.id, "stop")} disabled={actionLoading === inst.id}>
-                    ⏹ Stop
-                  </button>
-                  <button className="btn btn-ghost" style={{ padding: "6px 14px", fontSize: 13 }}
-                    onClick={() => handleAction(inst.id, "restart")} disabled={actionLoading === inst.id}>
-                    🔄
-                  </button>
-                </>
-              )}
-              <Link href={`${basePath}/dashboard/tunnels/edit?id=${inst.id}`} className="btn btn-ghost" style={{ padding: "6px 14px", fontSize: 13, textDecoration: "none" }}>
-                ⚙️ Config
-              </Link>
-              <button className="btn btn-ghost" style={{ padding: "6px 14px", fontSize: 13, color: "var(--danger)" }}
-                onClick={() => handleDelete(inst.id, inst.name)}>
-                🗑
-              </button>
+              {i.status_error && <div className="inline-error">{i.status_error}</div>}
+
+              <footer className="conn-foot">
+                <div className="conn-telemetry">
+                  <span className={peer ? "pill ok" : i.status === "running" ? "pill warn" : "pill muted"}>
+                    {i.engine !== "tun" ? "رله قدیمی" : peer ? "پاسخ معتبر" : i.status === "running" ? "در انتظار پاسخ" : "بدون ارتباط"}
+                  </span>
+                  <span className="mono" dir="ltr">↑{size(t?.tx_bytes)} ↓{size(t?.rx_bytes)}</span>
+                  {peer && t?.rtt_ms ? <span className="mono" dir="ltr">{Math.round(t.rtt_ms)} ms</span> : null}
+                  <span className="mono" dir="ltr">{duration(i.uptime)}</span>
+                </div>
+                <div className="row">
+                  {i.status === "running" ? (
+                    <>
+                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "stop")}>توقف</button>
+                      <button className="btn btn-ghost btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "restart")}>راه‌اندازی مجدد</button>
+                    </>
+                  ) : (
+                    <button className="btn btn-primary btn-sm" disabled={busy === i.id} onClick={() => action(i.id, "start")}>
+                      {busy === i.id ? "…" : "راه‌اندازی"}
+                    </button>
+                  )}
+                  <Link className="btn btn-ghost btn-sm" href={`${base}/dashboard/tunnels/edit?id=${i.id}`}>تنظیمات</Link>
+                  <button className="btn btn-ghost btn-sm danger-text" onClick={() => setToDelete(i)} aria-label={`حذف ${i.name}`}>حذف</button>
+                </div>
+              </footer>
+            </article>
+          );
+        })}
+      </div>
+
+      {toDelete && (
+        <div className="modal-overlay" onClick={() => setToDelete(null)}>
+          <div className="modal-content" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <h2>حذف اتصال</h2>
+            <p className="page-intro">
+              «{toDelete.name}» و تنظیمات محلی آن حذف می‌شود. سمت مقابل جداگانه باید حذف شود.
+            </p>
+            <div className="row end">
+              <button className="btn btn-ghost" onClick={() => setToDelete(null)}>انصراف</button>
+              <button className="btn btn-danger" onClick={remove}>حذف قطعی</button>
             </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

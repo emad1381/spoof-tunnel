@@ -1,112 +1,95 @@
 "use client";
 import { useState } from "react";
 import { api, setToken } from "@/lib/api";
+import { getBasePath } from "@/lib/basepath";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      const data = await api.login(username, password);
+      const data = await api.login(username.trim(), password);
       setToken(data.token);
-      // Redirect to dashboard under the web path
-      const parts = window.location.pathname.split('/').filter(Boolean);
-      const base = (parts.length > 0 && parts[0] !== 'login') ? '/' + parts[0] : '';
-      window.location.href = base + "/dashboard";
-    } catch (err: any) {
-      setError(err.message || "Login failed");
+      window.location.replace(getBasePath() + "/dashboard");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "ورود ناموفق بود";
+      setError(
+        msg === "Too many login attempts; try again in a minute"
+          ? "تلاش‌های ناموفق زیاد بوده است؛ یک دقیقه بعد دوباره تلاش کن."
+          : msg === "invalid credentials"
+            ? "نام کاربری یا رمز عبور نادرست است."
+            : msg
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      background: "radial-gradient(ellipse at top, #1a1a2e 0%, #0a0a0f 70%)",
-    }}>
-      <div style={{
-        background: "rgba(22, 22, 31, 0.9)",
-        backdropFilter: "blur(20px)",
-        border: "1px solid var(--border)",
-        borderRadius: "20px",
-        padding: "48px",
-        width: "420px",
-        boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)",
-      }}>
-        {/* Logo */}
-        <div style={{ textAlign: "center", marginBottom: "32px" }}>
-          <div style={{
-            width: 56, height: 56, borderRadius: 16,
-            background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-            display: "inline-flex", alignItems: "center", justifyContent: "center",
-            fontSize: 24, fontWeight: 700, color: "white", marginBottom: 16,
-          }}>
-            SP
-          </div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Spoof Panel</h1>
-          <p style={{ color: "var(--text-secondary)", fontSize: 14 }}>Sign in to your account</p>
+    <main className="login-wrap">
+      <div className="login-card">
+        <div className="login-brand">
+          <div className="brand-mark lg">SP</div>
+          <h1>ورود به پنل</h1>
+          <p>EMAD · Spoof Tunnel</p>
         </div>
 
-        {error && (
-          <div style={{
-            background: "#ef444420", border: "1px solid #ef4444",
-            borderRadius: 8, padding: "10px 14px", marginBottom: 20,
-            color: "#ef4444", fontSize: 13,
-          }}>
-            {error}
-          </div>
-        )}
+        {error && <div role="alert" className="banner error">{error}</div>}
 
-        <form onSubmit={handleLogin}>
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>
-              Username
-            </label>
+        <form onSubmit={submit} className="stack">
+          <label className="field">
+            <span>نام کاربری</span>
             <input
               className="input"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter username"
+              autoComplete="username"
               autoFocus
               required
+              dir="ltr"
             />
-          </div>
+          </label>
 
-          <div style={{ marginBottom: 28 }}>
-            <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>
-              Password
-            </label>
-            <input
-              className="input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
-              required
-            />
-          </div>
+          <label className="field">
+            <span>رمز عبور</span>
+            <div className="input-group">
+              <input
+                className="input"
+                type={show ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+                dir="ltr"
+              />
+              <button
+                type="button"
+                className="input-addon"
+                onClick={() => setShow(!show)}
+                aria-label={show ? "پنهان کردن رمز" : "نمایش رمز"}
+              >
+                {show ? "پنهان" : "نمایش"}
+              </button>
+            </div>
+          </label>
 
-          <button
-            className="btn btn-primary"
-            type="submit"
-            disabled={loading}
-            style={{ width: "100%", justifyContent: "center", padding: "12px", fontSize: 15 }}
-          >
-            {loading ? "Signing in..." : "Sign In"}
+          <button className="btn btn-primary btn-block" type="submit" disabled={loading}>
+            {loading ? "در حال ورود…" : "ورود"}
           </button>
         </form>
+
+        <p className="login-foot">
+          دسترسی از راه دور را فقط روی HTTPS یا از طریق SSH forwarding انجام بده.
+        </p>
       </div>
-    </div>
+    </main>
   );
 }

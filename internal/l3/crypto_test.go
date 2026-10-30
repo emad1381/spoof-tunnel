@@ -5,6 +5,25 @@ import (
 	"testing"
 )
 
+func validConfig() Config {
+	return Config{
+		Role:        "local",
+		LocalIP:     "192.0.2.1",
+		PeerIP:      "192.0.2.2",
+		SpoofSource: "198.51.100.10",
+		PeerSpoof:   "198.51.100.20",
+		Send:        "icmp",
+		Receive:     "icmp",
+		SendPort:    8090,
+		ReceivePort: 5001,
+		Interface:   "emadtest0",
+		Address:     "10.77.0.1/30",
+		PeerAddress: "10.77.0.2",
+		MTU:         1280,
+		PSK:         base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	}
+}
+
 func TestAuthenticatedFrames(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	a, _ := NewCodec(key, "local")
@@ -32,6 +51,7 @@ func TestAuthenticatedFrames(t *testing.T) {
 		t.Fatal("accepted wrong key")
 	}
 }
+
 func TestReordering(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	a, _ := NewCodec(key, "local")
@@ -47,5 +67,48 @@ func TestReordering(t *testing.T) {
 	}
 	if _, _, err := b.Open(frames[5]); err == nil {
 		t.Fatal("accepted frame outside replay window")
+	}
+}
+
+func TestMultiSpoofSources(t *testing.T) {
+	cfg := validConfig()
+	cfg.SpoofSources = []string{"198.51.100.10", "198.51.100.11", "198.51.100.10"} // includes duplicate
+	sources, err := cfg.Sources()
+	if err != nil {
+		t.Fatalf("sources: %v", err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("expected 2 de-duplicated sources, got %d", len(sources))
+	}
+
+	// Colliding with peer spoof must fail
+	cfg.SpoofSources = []string{cfg.PeerSpoof}
+	if _, err := cfg.Sources(); err == nil {
+		t.Fatal("expected error on collision with peer spoof")
+	}
+}
+
+func TestConfigValidation(t *testing.T) {
+	cfg := validConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+
+	badRole := cfg
+	badRole.Role = "client"
+	if err := badRole.Validate(); err == nil {
+		t.Fatal("accepted invalid role")
+	}
+
+	sameEndpoints := cfg
+	sameEndpoints.PeerIP = sameEndpoints.LocalIP
+	if err := sameEndpoints.Validate(); err == nil {
+		t.Fatal("accepted identical endpoints")
+	}
+
+	badMTU := cfg
+	badMTU.MTU = 1500
+	if err := badMTU.Validate(); err == nil {
+		t.Fatal("accepted MTU > 1300")
 	}
 }

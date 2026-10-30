@@ -4,7 +4,7 @@ set -euo pipefail
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'This package requires Linux amd64; build from source for another Linux architecture.' >&2; exit 1; }
 for cmd in curl tar sha256sum; do command -v "$cmd" >/dev/null || { echo "Install $cmd first." >&2; exit 1; }; done
 printf '\n  EMAD · SPOOF TUNNEL\n  Authenticated TUN + Web Panel\n\n'
-version=${EMAD_RELEASE:-emad-v0.1.0}
+version=${EMAD_RELEASE:-emad-v0.2.0}
 [[ "$version" =~ ^emad-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid release version.' >&2; exit 1; }
 echo "[1/3] Downloading $version…"
 work=$(mktemp -d -t emad-install.XXXXXX)

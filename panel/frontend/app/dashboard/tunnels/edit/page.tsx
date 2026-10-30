@@ -1,390 +1,396 @@
 "use client";
-import { useEffect, useState, Suspense } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { useBasePath } from "@/lib/basepath";
+import { getBasePath, useBasePath } from "@/lib/basepath";
 
-const TRANSPORT_OPTIONS = [
-  { value: "tcp", label: "TCP (SYN)" },
+const CARRIERS = [
+  { value: "icmp", label: "ICMP (پیشنهادی)" },
+  { value: "tcp", label: "TCP خام" },
   { value: "udp", label: "UDP" },
-  { value: "icmp", label: "ICMP" },
-  { value: "icmpv6", label: "ICMPv6" },
+  { value: "ipip", label: "پروتکل ۴" },
+  { value: "experimental", label: "پروتکل ۲۵۳" },
 ];
 
-function EditContent() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const id = Number(searchParams.get("id"));
-  const basePath = useBasePath();
+type Instance = Record<string, string | number | boolean | null | undefined>;
 
-  const [config, setConfig] = useState<any>(null);
+const STATUS: Record<string, string> = {
+  running: "در حال اجرا",
+  stopped: "متوقف",
+  starting: "در حال شروع",
+  stopping: "در حال توقف",
+  error: "خطا",
+};
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {children}
+      {hint && <small className="hint">{hint}</small>}
+    </label>
+  );
+}
+
+function EditContent() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const id = Number(params.get("id"));
+  const base = useBasePath();
+
+  const [config, setConfig] = useState<Instance | null>(null);
   const [status, setStatus] = useState("stopped");
   const [uptime, setUptime] = useState(0);
   const [statusError, setStatusError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [tab, setTab] = useState<"config" | "ips" | "logs">("config");
   const [spoofIPs, setSpoofIPs] = useState("");
-  const [spoofCount, setSpoofCount] = useState(0);
-  const [savingIPs, setSavingIPs] = useState(false);
-  const [activeTab, setActiveTab] = useState<"config" | "spoofips" | "logs">("config");
+  const [savedIPs, setSavedIPs] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
+  const [wsState, setWsState] = useState<"off" | "live" | "retry">("off");
+  const logEnd = useRef<HTMLDivElement>(null);
 
-  const fetchConfig = async () => {
+  const load = useCallback(async (full = true) => {
     if (!id) return;
     try {
       const data = await api.getInstance(id);
-      setConfig(data.instance);
+      if (full) setConfig(data.instance);
       setStatus(data.status);
       setUptime(data.uptime);
       setStatusError(data.error || "");
     } catch {
-      router.push(basePath + "/dashboard/tunnels");
+      router.replace(base + "/dashboard/tunnels");
     }
-  };
-
-  const fetchStatus = async () => {
-    if (!id) return;
-    try {
-      const data = await api.getInstance(id);
-      setStatus(data.status);
-      setUptime(data.uptime);
-      setStatusError(data.error || "");
-    } catch { }
-  };
-
-  const fetchSpoofIPs = async () => {
-    if (!id) return;
-    try {
-      const data = await api.getInstanceSpoofIPs(id);
-      setSpoofIPs(data.content);
-      setSpoofCount(data.count);
-    } catch { }
-  };
+  }, [id, base, router]);
 
   useEffect(() => {
-    fetchConfig();
-    fetchSpoofIPs();
-    const interval = setInterval(fetchStatus, 3000);
-    return () => clearInterval(interval);
+    if (!id) {
+      router.replace(getBasePath() + "/dashboard/tunnels");
+      return;
+    }
+    void load(true);
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void load(false);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [id, load, router]);
+
+  useEffect(() => {
+    if (!id) return;
+    api.getInstanceSpoofIPs(id).then((d) => setSpoofIPs(d.content || "")).catch(() => {});
   }, [id]);
 
-  // WebSocket logs
+  // Live logs over WebSocket
   useEffect(() => {
-    if (activeTab !== "logs" || !id) return;
-    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const token = localStorage.getItem("token");
-    const ws = new WebSocket(`${wsProtocol}//${window.location.host}${basePath}/api/instances/${id}/logs?token=${token}`);
-    ws.onmessage = (e) => {
-      setLogs(prev => [...prev.slice(-499), e.data]);
-    };
-    return () => ws.close();
-  }, [id, activeTab]);
+    if (tab !== "logs" || !id) return;
+    let ws: WebSocket | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
 
-  const handleSave = async () => {
+    const connect = () => {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const token = localStorage.getItem("token") || "";
+      const url = `${proto}//${window.location.host}${getBasePath()}/api/instances/${id}/logs?token=${encodeURIComponent(token)}`;
+      ws = new WebSocket(url);
+      ws.onopen = () => setWsState("live");
+      ws.onmessage = (ev) => setLogs((prev) => [...prev.slice(-800), String(ev.data)]);
+      ws.onclose = () => {
+        if (closed) return;
+        setWsState("retry");
+        timer = setTimeout(connect, 2500);
+      };
+    };
+    connect();
+    return () => {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      ws?.close();
+      setWsState("off");
+    };
+  }, [tab, id]);
+
+  useEffect(() => {
+    logEnd.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
+
+  const set = (key: string, value: string | number | boolean) =>
+    setConfig((c) => (c ? { ...c, [key]: value } : c));
+
+  const save = async () => {
+    if (!config) return;
     setSaving(true);
+    setError("");
+    setNotice("");
     try {
       await api.updateInstance(id, config);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (err: any) {
-      alert(err.message);
+      setNotice("تنظیمات ذخیره شد. برای اعمال، تونل را دوباره راه‌اندازی کن.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ذخیره ناموفق بود");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleSaveSpoofIPs = async () => {
-    setSavingIPs(true);
+  const saveIPs = async () => {
+    setError("");
     try {
-      const result = await api.setInstanceSpoofIPs(id, spoofIPs);
-      setSpoofCount(result.count);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setSavingIPs(false);
+      const r = await api.setInstanceSpoofIPs(id, spoofIPs);
+      setSavedIPs(true);
+      setSpoofIPs((v) => v);
+      setNotice(`${r.count} آدرس ذخیره شد. برای اعمال، تونل را دوباره راه‌اندازی کن.`);
+      setTimeout(() => setSavedIPs(false), 1800);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ذخیرهٔ فهرست ناموفق بود");
     }
   };
 
-  const handleAction = async (action: "start" | "stop" | "restart") => {
+  const control = async (kind: "start" | "stop" | "restart") => {
+    setError("");
     try {
-      if (action === "start") await api.instanceStart(id);
-      else if (action === "stop") await api.instanceStop(id);
+      if (kind === "start") await api.instanceStart(id);
+      else if (kind === "stop") await api.instanceStop(id);
       else await api.instanceRestart(id);
-      setTimeout(fetchStatus, 800);
-    } catch (err: any) {
-      alert(err.message);
+      setTimeout(() => void load(false), 700);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "عملیات ناموفق بود");
     }
   };
 
-  const update = (key: string, value: any) => setConfig({ ...config, [key]: value });
+  const download = () => {
+    if (!config) return;
+    const payload = { ...config };
+    delete payload.status;
+    delete payload.uptime;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${String(config.name || "tunnel").replace(/\s+/g, "-")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
-  if (!config) return <div style={{ color: "var(--text-secondary)" }}>Loading...</div>;
+  if (!config) return <div className="page"><p className="muted">در حال دریافت تنظیمات…</p></div>;
 
+  const isTun = config.engine === "tun";
   const isLocal = config.mode === "local";
-
-  if (config?.engine === "tun") return <div dir="rtl" className="emad-page"><div className="eyebrow">TUN CONNECTION</div><h1>{config.name}</h1><label><input type="checkbox" checked={!!config.enabled} onChange={e=>setConfig({...config,enabled:e.target.checked})}/> شروع خودکار با پنل</label><p className="page-intro">{status} · {statusError || "برای فعال شدن تغییرات، پس از ذخیره تونل را راه‌اندازی مجدد کن."}</p><div className="glass-card"><div className="field-grid">{([ ["name","نام"],["local_ip","IP واقعی همین سرور"],[config.mode==="local"?"remote_addr":"client_ip","IP واقعی طرف مقابل"],["spoof_ip","مبدأ جعلی همین سمت"],["peer_spoof_ip","مبدأ جعلی طرف مقابل"],["tun_interface","نام رابط TUN"],["tun_address","آدرس داخلی / prefix"],["tun_peer","آدرس داخلی طرف مقابل"]] as const).map(([key,label])=><label key={key}>{label}<input className="input" dir="ltr" value={config[key]||""} onChange={e=>setConfig({...config,[key]:e.target.value})}/></label>)}{(["send_transport","recv_transport"] as const).map(key=><label key={key}>{key==="send_transport"?"حامل ارسال":"حامل دریافت"}<select className="input" value={config[key]} onChange={e=>setConfig({...config,[key]:e.target.value})}>{["icmp","tcp","udp","ipip","experimental"].map(t=><option key={t}>{t}</option>)}</select></label>)}{["tun_mtu",config.mode==="local"?"remote_port":"client_port",config.mode==="local"?"recv_port":"listen_port"].map(key=><label key={key}>{key}<input className="input" type="number" value={config[key]} onChange={e=>setConfig({...config,[key]:Number(e.target.value)})}/></label>)}</div><button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saved?"ذخیره شد":saving?"در حال ذخیره…":"ذخیره تنظیمات"}</button><button className="btn btn-ghost" onClick={()=>setActiveTab(activeTab==="logs"?"config":"logs")}>نمایش / بستن لاگ</button>{activeTab==="logs"&&<pre dir="ltr" style={{overflow:"auto",maxHeight:400}}>{logs.join("\n")||"هنوز لاگی ثبت نشده"}</pre>}</div></div>;
+  const running = status === "running";
+  const locked = running || status === "stopping";
 
   return (
-    <div>
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button className="btn btn-ghost" onClick={() => router.push(basePath + "/dashboard/tunnels")} style={{ padding: "6px 12px" }}>←</button>
-          <div className={`status-dot ${status}`} />
-          <h1 style={{ fontSize: 24, fontWeight: 700 }}>{config.name}</h1>
-          <span style={{
-            padding: "3px 10px", borderRadius: 4, fontSize: 12, fontWeight: 600,
-            background: isLocal ? "#6366f120" : "#22c55e20",
-            color: isLocal ? "#818cf8" : "#22c55e",
-          }}>
-            {config.mode?.toUpperCase()}
-          </span>
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <div className="eyebrow">CONNECTION / SETTINGS</div>
+          <div className="row">
+            <h1>{String(config.name || "اتصال")}</h1>
+            <span className={`pill ${status}`}>{STATUS[status] || status}</span>
+          </div>
+          <p className="page-intro">
+            {isTun ? "هستهٔ L3: ترافیک TCP، UDP و ICMP از رابط TUN عبور می‌کند." : "موتور قدیمی UDP relay؛ برای امکانات کامل یک اتصال TUN بساز."}
+          </p>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {status !== "running" ? (
-            <button className="btn btn-success" onClick={() => handleAction("start")}>▶ Start</button>
-          ) : (
+        <div className="row">
+          <button className="btn btn-ghost" onClick={() => router.push(getBasePath() + "/dashboard/tunnels")}>بازگشت</button>
+          {running ? (
             <>
-              <button className="btn btn-danger" onClick={() => handleAction("stop")}>⏹ Stop</button>
-              <button className="btn btn-ghost" onClick={() => handleAction("restart")}>🔄 Restart</button>
+              <button className="btn btn-ghost" onClick={() => control("stop")}>توقف</button>
+              <button className="btn btn-ghost" onClick={() => control("restart")}>راه‌اندازی مجدد</button>
             </>
+          ) : (
+            <button className="btn btn-primary" onClick={() => control("start")}>راه‌اندازی</button>
           )}
         </div>
       </div>
 
-      {statusError && (
-        <div style={{ background: "#ef444420", border: "1px solid var(--danger)", borderRadius: 8, padding: "10px 14px", marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
-          {statusError}
-        </div>
-      )}
+      {statusError && <div role="alert" className="banner error">{statusError}</div>}
+      {error && <div role="alert" className="banner error">{error}</div>}
+      {notice && <div role="status" className="banner ok">{notice}</div>}
 
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 24 }}>
-        {(["config", "spoofips", "logs"] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => setActiveTab(t)}
-            style={{
-              padding: "10px 24px",
-              background: activeTab === t ? "var(--accent)" : "var(--bg-card)",
-              color: activeTab === t ? "white" : "var(--text-secondary)",
-              border: `1px solid ${activeTab === t ? "var(--accent)" : "var(--border)"}`,
-              borderRadius: t === "config" ? "8px 0 0 8px" : t === "logs" ? "0 8px 8px 0" : "0",
-              cursor: "pointer", fontWeight: 600, fontSize: 13,
-            }}
-          >
-            {t === "config" ? "⚙️ Config" : t === "spoofips" ? "📋 Spoof IPs" : "📝 Logs"}
+      <div className="tabs" role="tablist">
+        {([
+          ["config", "تنظیمات"],
+          ["ips", "IPهای اسپوف"],
+          ["logs", "لاگ زنده"],
+        ] as const).map(([k, label]) => (
+          <button key={k} role="tab" aria-selected={tab === k} className={`tab ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>
+            {label}
           </button>
         ))}
       </div>
 
-      {/* Config Tab */}
-      {activeTab === "config" && (
+      {tab === "config" && (
         <>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, alignItems: "center", marginBottom: 20 }}>
-            {saved && <span style={{ color: "var(--success)", fontSize: 14 }}>✓ Saved!</span>}
-            <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-              {saving ? "Saving..." : "Save Config"}
-            </button>
+          {locked && <div className="banner warn">برای ویرایش، ابتدا پردازش را متوقف کن.</div>}
+
+          <div className="grid-2">
+            <section className="panel">
+              <h2>هویت</h2>
+              <div className="stack">
+                <Field label="نام اتصال">
+                  <input className="input" value={String(config.name ?? "")} disabled={locked} onChange={(e) => set("name", e.target.value)} maxLength={100} />
+                </Field>
+                <Field label="شروع خودکار با پنل">
+                  <label className="switch-row">
+                    <input type="checkbox" checked={!!config.enabled} disabled={locked} onChange={(e) => set("enabled", e.target.checked)} />
+                    <span>این اتصال هنگام بالا آمدن پنل اجرا شود</span>
+                  </label>
+                </Field>
+                <Field label="کلید مشترک (PSK)" hint="کلید در فایل خروجی است؛ آن را منتشر نکن.">
+                  <input className="input mono" dir="ltr" value="••••••••••••••••" readOnly />
+                </Field>
+              </div>
+            </section>
+
+            <section className="panel">
+              <h2>حامل‌ها و پورت‌ها</h2>
+              <div className="stack">
+                <Field label="حامل ارسال">
+                  <select className="input" value={String(config.send_transport ?? "icmp")} disabled={locked} onChange={(e) => set("send_transport", e.target.value)}>
+                    {CARRIERS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="حامل دریافت" hint="باید معکوس حامل ارسال طرف مقابل باشد.">
+                  <select className="input" value={String(config.recv_transport ?? "icmp")} disabled={locked} onChange={(e) => set("recv_transport", e.target.value)}>
+                    {CARRIERS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                </Field>
+                <div className="grid-2 tight">
+                  <Field label={isLocal ? "پورت دریافت طرف مقابل" : "پورت دریافت این سرور"}>
+                    <input className="input mono" dir="ltr" type="number" min={1} max={65535}
+                      value={Number(isLocal ? config.remote_port : config.listen_port) || ""}
+                      disabled={locked}
+                      onChange={(e) => set(isLocal ? "remote_port" : "listen_port", Number(e.target.value))} />
+                  </Field>
+                  <Field label={isLocal ? "پورت دریافت این سرور" : "پورت دریافت طرف مقابل"}>
+                    <input className="input mono" dir="ltr" type="number" min={1} max={65535}
+                      value={Number(isLocal ? config.recv_port : config.client_port) || ""}
+                      disabled={locked}
+                      onChange={(e) => set(isLocal ? "recv_port" : "client_port", Number(e.target.value))} />
+                  </Field>
+                </div>
+              </div>
+            </section>
+
+            <section className="panel">
+              <h2>آدرس‌های واقعی</h2>
+              <div className="stack">
+                <Field label="IP واقعی این سرور" hint="مقصد بسته‌ها و مبنای سوکت خام.">
+                  <input className="input mono" dir="ltr" value={String(config.local_ip ?? "")} disabled={locked} onChange={(e) => set("local_ip", e.target.value)} />
+                </Field>
+                <Field label="IP واقعی طرف مقابل">
+                  <input className="input mono" dir="ltr"
+                    value={String((isLocal ? config.remote_addr : config.client_ip) ?? "")}
+                    disabled={locked}
+                    onChange={(e) => set(isLocal ? "remote_addr" : "client_ip", e.target.value)} />
+                </Field>
+              </div>
+            </section>
+
+            <section className="panel">
+              <h2>مبدأ جعلی</h2>
+              <div className="stack">
+                <Field label="مبدأ جعلی این سمت" hint={isTun ? "برای چند IP از تب «IPهای اسپوف» استفاده کن." : ""}>
+                  <input className="input mono" dir="ltr" value={String(config.spoof_ip ?? "")} disabled={locked} onChange={(e) => set("spoof_ip", e.target.value)} />
+                </Field>
+                <Field label="مبدأ جعلی مورد انتظار طرف مقابل" hint="بسته‌های دیگر IPها دور ریخته می‌شوند.">
+                  <input className="input mono" dir="ltr" value={String(config.peer_spoof_ip ?? "")} disabled={locked} onChange={(e) => set("peer_spoof_ip", e.target.value)} />
+                </Field>
+              </div>
+            </section>
+
+            {isTun && (
+              <section className="panel">
+                <h2>رابط TUN</h2>
+                <div className="stack">
+                  <Field label="نام رابط" hint="۱ تا ۱۵ کاراکتر، با حرف شروع شود.">
+                    <input className="input mono" dir="ltr" value={String(config.tun_interface ?? "")} disabled={locked} onChange={(e) => set("tun_interface", e.target.value)} />
+                  </Field>
+                  <div className="grid-2 tight">
+                    <Field label="آدرس داخلی این سمت">
+                      <input className="input mono" dir="ltr" value={String(config.tun_address ?? "")} disabled={locked} onChange={(e) => set("tun_address", e.target.value)} />
+                    </Field>
+                    <Field label="آدرس داخلی طرف مقابل">
+                      <input className="input mono" dir="ltr" value={String(config.tun_peer ?? "")} disabled={locked} onChange={(e) => set("tun_peer", e.target.value)} />
+                    </Field>
+                  </div>
+                  <Field label="MTU" hint="۵۷۶ تا ۱۳۰۰؛ برای مسیرهای پرافت ۱۲۸۰ امن است.">
+                    <input className="input mono" dir="ltr" type="number" min={576} max={1300}
+                      value={Number(config.tun_mtu) || ""}
+                      disabled={locked}
+                      onChange={(e) => set("tun_mtu", Number(e.target.value))} />
+                  </Field>
+                </div>
+              </section>
+            )}
           </div>
 
-          <div className="responsive-grid" style={{ gap: 24 }}>
-            {/* General */}
-            <div className="glass-card">
-              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20, color: "var(--accent)" }}>General</h2>
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Name</label>
-                  <input className="input" value={config.name || ""} onChange={e => update("name", e.target.value)} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Mode</label>
-                  <select className="input" value={config.mode} onChange={e => update("mode", e.target.value)}>
-                    <option value="local">Local (Client)</option>
-                    <option value="remote">Remote (Server)</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Transport */}
-            <div className="glass-card">
-              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20, color: "var(--accent)" }}>Transport</h2>
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Send Transport</label>
-                  <select className="input" value={config.send_transport} onChange={e => update("send_transport", e.target.value)}>
-                    {TRANSPORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Recv Transport</label>
-                  <select className="input" value={config.recv_transport} onChange={e => update("recv_transport", e.target.value)}>
-                    {TRANSPORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-
-                {/* XDP Section */}
-                <div style={{ padding: "12px", background: "var(--bg-card-hover)", borderRadius: 8, border: "1px solid var(--border)" }}>
-                  <div style={{ marginBottom: 12 }}>
-                    <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>
-                      eBPF / XDP Acceleration (Linux only)
-                    </label>
-                    <select
-                      className="input"
-                      value={config.xdp_interface ? "xdp" : "noxdp"}
-                      onChange={e => {
-                        if (e.target.value === "noxdp") update("xdp_interface", "");
-                        else update("xdp_interface", "eth0");
-                      }}
-                    >
-                      <option value="noxdp">Disabled (Standard Raw Sockets)</option>
-                      <option value="xdp">Enabled (Kernel-Bypass)</option>
-                    </select>
-                  </div>
-                  {config.xdp_interface !== undefined && config.xdp_interface !== "" && (
-                    <div>
-                      <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>
-                        Network Interface (e.g. eth0, ens3)
-                      </label>
-                      <input
-                        className="input"
-                        value={config.xdp_interface}
-                        onChange={e => update("xdp_interface", e.target.value)}
-                        placeholder="eth0"
-                      />
-                      <p style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 6 }}>
-                        Drastically improves receive performance. Requires root and Linux kernel ≥ 5.8.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Local Mode */}
-            {isLocal && (
-              <div className="glass-card">
-                <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20, color: "var(--accent)" }}>Local Mode</h2>
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Listen Address (UDP)</label>
-                    <input className="input" value={config.listen_addr || ""} onChange={e => update("listen_addr", e.target.value)} placeholder="127.0.0.1:5000" />
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Remote Server IP</label>
-                    <input className="input" value={config.remote_addr || ""} onChange={e => update("remote_addr", e.target.value)} placeholder="Server IP" />
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Remote Port</label>
-                      <input className="input" type="number" value={config.remote_port} onChange={e => update("remote_port", parseInt(e.target.value) || 0)} />
-                    </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Recv Port</label>
-                      <input className="input" type="number" value={config.recv_port} onChange={e => update("recv_port", parseInt(e.target.value) || 0)} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Remote Mode */}
-            {!isLocal && (
-              <div className="glass-card">
-                <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20, color: "var(--accent)" }}>Remote Mode</h2>
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Listen Port</label>
-                    <input className="input" type="number" value={config.listen_port} onChange={e => update("listen_port", parseInt(e.target.value) || 0)} />
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Forward Address</label>
-                    <input className="input" value={config.forward_addr || ""} onChange={e => update("forward_addr", e.target.value)} placeholder="127.0.0.1:51820" />
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Client IP</label>
-                      <input className="input" value={config.client_ip || ""} onChange={e => update("client_ip", e.target.value)} />
-                    </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Client Port</label>
-                      <input className="input" type="number" value={config.client_port} onChange={e => update("client_port", parseInt(e.target.value) || 0)} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Spoof */}
-            <div className="glass-card">
-              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20, color: "var(--accent)" }}>Spoof Settings</h2>
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Spoof IP</label>
-                  <input className="input" value={config.spoof_ip || ""} onChange={e => update("spoof_ip", e.target.value)} placeholder="Spoofed source IP" />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Spoof Port</label>
-                  <input className="input" type="number" value={config.spoof_port} onChange={e => update("spoof_port", parseInt(e.target.value) || 0)} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Peer Spoof IP (expected source)</label>
-                  <input className="input" value={config.peer_spoof_ip || ""} onChange={e => update("peer_spoof_ip", e.target.value)} placeholder="Optional" />
-                </div>
-              </div>
-            </div>
+          <div className="row end sticky-actions">
+            <button className="btn btn-ghost" onClick={download}>دانلود تنظیمات</button>
+            <button className="btn btn-primary" disabled={saving || locked} onClick={save}>
+              {saving ? "در حال ذخیره…" : "ذخیرهٔ تنظیمات"}
+            </button>
           </div>
         </>
       )}
 
-      {/* Spoof IPs Tab */}
-      {activeTab === "spoofips" && (
-        <div className="glass-card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, color: "var(--accent)" }}>
-              Spoof IP List <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 400 }}>({spoofCount} IPs)</span>
-            </h2>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {saved && <span style={{ color: "var(--success)", fontSize: 13 }}>✓ Saved!</span>}
-              <button className="btn btn-primary" onClick={handleSaveSpoofIPs} disabled={savingIPs} style={{ fontSize: 13 }}>
-                {savingIPs ? "Saving..." : "Save IPs"}
-              </button>
-            </div>
+      {tab === "ips" && (
+        <section className="panel">
+          <div className="section-head">
+            <h2>فهرست IPهای مبدأ جعلی <small className="muted">({spoofIPs.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).length} آدرس)</small></h2>
+            <button className="btn btn-primary btn-sm" onClick={saveIPs} disabled={running}>
+              {savedIPs ? "ذخیره شد" : "ذخیرهٔ فهرست"}
+            </button>
           </div>
-          <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 14 }}>
-            One IP per line. Supports single IPs, CIDR ranges, and dash ranges. These IPs are used by the tunnel as spoofed source addresses (round-robin).
+          <p className="page-intro">
+            هر خط یک IP، CIDR یا بازه. هستهٔ L3 این آدرس‌ها را به‌صورت گردشی (round-robin) روی بسته‌های ارسالی استفاده می‌کند.
+            برای اعمال، تونل را دوباره راه‌اندازی کن. حداقل یک آدرس باید با «مبدأ جعلی این سمت» هم‌خوان باشد.
           </p>
           <textarea
-            className="input"
+            className="input mono"
+            dir="ltr"
+            rows={14}
             value={spoofIPs}
-            onChange={e => { setSpoofIPs(e.target.value); setSpoofCount(e.target.value.trim() ? e.target.value.trim().split("\n").filter(l => l.trim()).length : 0); }}
-            placeholder={"1.2.3.4\n10.0.0.0/24\n172.16.0.1-172.16.0.50"}
-            rows={16}
-            style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, resize: "vertical" }}
+            disabled={running}
+            onChange={(e) => setSpoofIPs(e.target.value)}
+            placeholder={"198.51.100.10\n198.51.100.0/28\n203.0.113.5-203.0.113.20"}
+            spellCheck={false}
           />
-        </div>
+          {running && <p className="hint">پردازش در حال اجراست؛ برای ویرایش فهرست ابتدا آن را متوقف کن.</p>}
+        </section>
       )}
 
-      {/* Logs Tab */}
-      {activeTab === "logs" && (
-        <div className="glass-card">
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, color: "var(--accent)" }}>Live Logs</h2>
-          <div className="log-viewer">
-            {logs.length === 0 && (
-              <div style={{ color: "var(--text-secondary)", textAlign: "center", padding: 32 }}>
-                {status === "running" ? "Waiting for logs..." : "Start the tunnel to see logs."}
-              </div>
-            )}
+      {tab === "logs" && (
+        <section className="panel">
+          <div className="section-head">
+            <h2>لاگ زنده</h2>
+            <div className="row">
+              <span className={`pill ${wsState === "live" ? "ok" : wsState === "retry" ? "warn" : "muted"}`}>
+                {wsState === "live" ? "متصل" : wsState === "retry" ? "اتصال مجدد…" : "غیرفعال"}
+              </span>
+              <button className="btn btn-ghost btn-sm" onClick={() => setLogs([])}>پاک کردن</button>
+            </div>
+          </div>
+          <div className="log-viewer" dir="ltr">
+            {logs.length === 0 && <div className="muted">هنوز لاگی ثبت نشده است. تونل را راه‌اندازی کن.</div>}
             {logs.map((line, i) => (
-              <div key={i} className={line.includes("error") || line.includes("ERROR") ? "log-error" : line.includes("warn") ? "log-warn" : ""}>
+              <div key={`${i}-${line.slice(0, 12)}`} className={/error|fatal|panic/i.test(line) ? "log-error" : /warn/i.test(line) ? "log-warn" : ""}>
                 {line}
               </div>
             ))}
+            <div ref={logEnd} />
           </div>
-        </div>
+        </section>
       )}
     </div>
   );
@@ -392,7 +398,7 @@ function EditContent() {
 
 export default function EditPage() {
   return (
-    <Suspense fallback={<div style={{ color: "var(--text-secondary)" }}>Loading...</div>}>
+    <Suspense fallback={<div className="page"><p className="muted">در حال بارگذاری…</p></div>}>
       <EditContent />
     </Suspense>
   );

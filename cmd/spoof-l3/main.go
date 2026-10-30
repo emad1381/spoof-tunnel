@@ -4,17 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"github.com/ParsaKSH/spoof-tunnel/internal/l3"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/ParsaKSH/spoof-tunnel/internal/l3"
 )
 
 func main() {
 	path := flag.String("config", "", "JSON configuration file")
 	check := flag.Bool("check", false, "validate configuration without opening sockets")
+	version := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+	if *version {
+		fmt.Println("spoof-l3 " + l3.Version)
+		return
+	}
+	if *path == "" {
+		log.Fatal("missing --config flag")
+	}
 	data, err := os.ReadFile(*path)
 	if err != nil {
 		log.Fatal(err)

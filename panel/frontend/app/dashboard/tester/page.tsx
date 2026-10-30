@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 
 type TesterResult = {
@@ -23,7 +23,15 @@ type TesterState = {
 
 export default function TesterPage() {
   const [tab, setTab] = useState<"receiver" | "sender">("receiver");
-  const [state, setState] = useState<TesterState>({ status: "idle", mode: "", progress: 0, total_ips: 0, passed_count: 0, recv_count: 0, results: [] });
+  const [state, setState] = useState<TesterState>({
+    status: "idle",
+    mode: "",
+    progress: 0,
+    total_ips: 0,
+    passed_count: 0,
+    recv_count: 0,
+    results: [],
+  });
   const [inputType, setInputType] = useState<"text" | "file_path">("text");
   const [ipList, setIpList] = useState("");
   const [serverFilePath, setServerFilePath] = useState("");
@@ -40,7 +48,6 @@ export default function TesterPage() {
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Poll status while running
   useEffect(() => {
     if (state.status === "running") {
       pollRef.current = setInterval(async () => {
@@ -50,16 +57,27 @@ export default function TesterPage() {
           if (s.status !== "running" && pollRef.current) {
             clearInterval(pollRef.current);
           }
-        } catch { }
+        } catch {}
       }, 2000);
     }
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [state.status]);
 
   const handleStart = async () => {
-    if (inputType === "text" && !ipList.trim()) { setError("Enter source IPs"); return; }
-    if (inputType === "file_path" && !serverFilePath.trim()) { setError("Enter server file path"); return; }
-    if (tab === "sender" && !dstIP.trim()) { setError("Enter destination IP"); return; }
+    if (inputType === "text" && !ipList.trim()) {
+      setError("فهرست IPهای مبدأ را وارد کن.");
+      return;
+    }
+    if (inputType === "file_path" && !serverFilePath.trim()) {
+      setError("مسیر فایل روی سرور را وارد کن.");
+      return;
+    }
+    if (tab === "sender" && !dstIP.trim()) {
+      setError("آدرس IP مقصد (سرور گیرنده) را وارد کن.");
+      return;
+    }
     setError("");
     setLoading(true);
     try {
@@ -75,9 +93,17 @@ export default function TesterPage() {
         max_packet_loss: maxLoss,
         concurrency,
       });
-      setState({ status: "running", mode: tab, progress: 0, total_ips: 0, passed_count: 0, recv_count: 0, results: [] });
-    } catch (e: any) {
-      setError(e.message);
+      setState({
+        status: "running",
+        mode: tab,
+        progress: 0,
+        total_ips: 0,
+        passed_count: 0,
+        recv_count: 0,
+        results: [],
+      });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "خطا در شروع آزمون");
     } finally {
       setLoading(false);
     }
@@ -86,8 +112,8 @@ export default function TesterPage() {
   const handleStop = async () => {
     try {
       await api.testerStop();
-      setState(prev => ({ ...prev, status: "idle" }));
-    } catch { }
+      setState((prev) => ({ ...prev, status: "idle" }));
+    } catch {}
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -96,36 +122,22 @@ export default function TesterPage() {
     try {
       const result = await api.testerUpload(file);
       setIpList(result.content);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "بارگذاری فایل ناموفق بود");
     }
     e.target.value = "";
   };
 
-  const copyToClipboard = (text: string) => {
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text);
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
-  };
-
   const handleCopyPassedIPs = () => {
-    const ips = results.filter(r => r.passed).map(r => r.ip).join("\n");
-    copyToClipboard(ips);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    const ips = results.filter((r) => r.passed).map((r) => r.ip).join("\n");
+    navigator.clipboard.writeText(ips).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
   };
 
   const handleDownloadPassedIPs = () => {
-    const ips = results.filter(r => r.passed).map(r => r.ip).join("\n") + "\n";
+    const ips = results.filter((r) => r.passed).map((r) => r.ip).join("\n") + "\n";
     const blob = new Blob([ips], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -136,306 +148,315 @@ export default function TesterPage() {
   };
 
   const results = state.results || [];
-  const passedCount = state.passed_count || results.filter(r => r.passed).length;
+  const passedCount = state.passed_count || results.filter((r) => r.passed).length;
   const totalIPs = state.total_ips || results.length;
   const receivedCount = results.length;
 
-  const lossColor = (pct: number) => {
-    if (pct <= 10) return "var(--success)";
-    if (pct <= 30) return "var(--warning)";
-    return "var(--danger)";
-  };
-
   return (
-    <div>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>🔬 Spoof Tester</h1>
-      <p style={{ color: "var(--text-secondary)", marginBottom: 24, fontSize: 14 }}>
-        Test which spoofed IPs can reach a destination. Run <strong>receiver</strong> on the remote server, then <strong>sender</strong> on the local side.
-      </p>
-
-      {/* Tab Selector */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 24 }}>
-        {(["receiver", "sender"] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => { setTab(t); setError(""); }}
-            style={{
-              padding: "10px 28px",
-              background: tab === t ? "var(--accent)" : "var(--bg-card)",
-              color: tab === t ? "white" : "var(--text-secondary)",
-              border: `1px solid ${tab === t ? "var(--accent)" : "var(--border)"}`,
-              borderRadius: t === "receiver" ? "8px 0 0 8px" : "0 8px 8px 0",
-              cursor: "pointer",
-              fontWeight: 600,
-              fontSize: 14,
-              transition: "all 0.2s",
-            }}
-          >
-            {t === "receiver" ? "📡 Receiver" : "📤 Sender"}
-          </button>
-        ))}
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <div className="eyebrow">DIAGNOSTICS / 05</div>
+          <h1>آزمون اسپوف</h1>
+          <p className="page-intro">
+            بررسی اینکه کدام IPهای مبدأ جعلی از فیلتر دیتاسنتر عبور کرده و به مقصد می‌رسند.
+            ابتدا <strong>گیرنده (Receiver)</strong> را روی سرور مقصد روشن کن، سپس <strong>فرستنده (Sender)</strong> را روی سرور مبدأ اجرا کن.
+          </p>
+        </div>
       </div>
 
-      <div className="responsive-grid" style={{ gap: 24 }}>
-        {/* Left: Config */}
-        <div className="glass-card">
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>
-            {tab === "receiver" ? "Receiver Config" : "Sender Config"}
-          </h3>
+      <div className="tabs" role="tablist">
+        <button
+          role="tab"
+          aria-selected={tab === "receiver"}
+          className={`tab ${tab === "receiver" ? "active" : ""}`}
+          onClick={() => { setTab("receiver"); setError(""); }}
+        >
+          📡 گیرنده (Receiver)
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "sender"}
+          className={`tab ${tab === "sender" ? "active" : ""}`}
+          onClick={() => { setTab("sender"); setError(""); }}
+        >
+          📤 فرستنده (Sender)
+        </button>
+      </div>
 
-          {/* Protocol */}
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>Protocol</label>
-            <select className="input" value={protocol} onChange={e => setProtocol(e.target.value)}>
-              <option value="icmp">ICMP</option>
-              <option value="tcp">TCP</option>
-            </select>
-          </div>
+      <div className="grid-2">
+        <div className="panel">
+          <h2>{tab === "receiver" ? "تنظیمات گیرنده" : "تنظیمات فرستنده"}</h2>
 
-          {/* Sender: Destination IP */}
-          {tab === "sender" && (
-            <>
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>Destination IP (Receiver Server)</label>
-                <input className="input" value={dstIP} onChange={e => setDstIP(e.target.value)} placeholder="e.g. 1.2.3.4" />
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>Concurrency</label>
-                <input className="input" type="number" value={concurrency} onChange={e => setConcurrency(+e.target.value)} min={1} max={1000} />
-              </div>
-            </>
-          )}
+          <div className="stack">
+            <label className="field">
+              <span>پروتکل آزمون</span>
+              <select className="input" value={protocol} onChange={(e) => setProtocol(e.target.value)}>
+                <option value="icmp">ICMP Echo</option>
+                <option value="tcp">TCP SYN</option>
+              </select>
+            </label>
 
-          {/* Shared (TCP only): Port */}
-          {protocol === "tcp" && (
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
-                {tab === "sender" ? "Destination Port" : "Filter Port (0 = all)"}
-              </label>
-              <input className="input" type="number" value={dstPort} onChange={e => setDstPort(+e.target.value)} />
-            </div>
-          )}
-
-          {/* Receiver: Timeout */}
-          {tab === "receiver" && (
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>Timeout (seconds)</label>
-              <input className="input" type="number" value={timeout} onChange={e => setTimeout_(+e.target.value)} min={5} max={300} />
-            </div>
-          )}
-
-          {/* Shared: Packet Count */}
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>Packets Per IP</label>
-            <input className="input" type="number" value={packetCount} onChange={e => setPacketCount(+e.target.value)} min={1} max={100} />
-          </div>
-
-          {/* Receiver: Max Loss */}
-          {tab === "receiver" && (
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
-                Max Packet Loss: <strong style={{ color: "var(--text-primary)" }}>{maxLoss}%</strong>
-              </label>
-              <input type="range" min={0} max={100} value={maxLoss} onChange={e => setMaxLoss(+e.target.value)}
-                style={{ width: "100%", accentColor: "var(--accent)" }} />
-            </div>
-          )}
-
-          {/* Source Input Type */}
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 8 }}>IP List Source</label>
-            <div style={{ display: "flex", gap: 16 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
-                <input type="radio" checked={inputType === "text"} onChange={() => setInputType("text")} />
-                Manual Input / Upload
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
-                <input type="radio" checked={inputType === "file_path"} onChange={() => setInputType("file_path")} />
-                Server File Path
-              </label>
-            </div>
-          </div>
-
-          {/* Source Content */}
-          {inputType === "text" ? (
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                  Source IPs (one per line, CIDR, ranges)
+            {tab === "sender" && (
+              <>
+                <label className="field">
+                  <span>IP مقصد (سرور گیرنده)</span>
+                  <input
+                    className="input mono"
+                    dir="ltr"
+                    value={dstIP}
+                    onChange={(e) => setDstIP(e.target.value.trim())}
+                    placeholder="مثال: 198.51.100.20"
+                    required
+                  />
                 </label>
-                <button className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => fileInputRef.current?.click()}>
-                  📁 Upload File
-                </button>
-                <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{ display: "none" }} accept=".txt,.csv,.list" />
-              </div>
-              <textarea
-                className="input"
-                value={ipList}
-                onChange={e => setIpList(e.target.value)}
-                placeholder={"1.1.1.1\n10.0.0.0/8\n192.168.1.1-192.168.1.100"}
-                style={{ height: 120, fontFamily: "monospace", fontSize: 13, resize: "vertical" }}
-              />
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
-                {ipList.trim() ? `${ipList.trim().split("\n").filter(l => l.trim()).length} lines` : "No IPs entered"}
-              </div>
-            </div>
-          ) : (
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 13, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
-                Absolute path to IP list file on server (e.g. /opt/ips.txt)
-              </label>
-              <input
-                className="input"
-                value={serverFilePath}
-                onChange={e => setServerFilePath(e.target.value)}
-                placeholder="/path/to/your/ips.txt"
-              />
-            </div>
-          )}
-
-          {error && (
-            <div style={{ background: "#ef444420", border: "1px solid var(--danger)", borderRadius: 8, padding: "8px 12px", marginBottom: 14, color: "var(--danger)", fontSize: 13 }}>
-              {error}
-            </div>
-          )}
-
-          {/* Buttons */}
-          <div style={{ display: "flex", gap: 8 }}>
-            {state.status !== "running" ? (
-              <button className="btn btn-primary" onClick={handleStart} disabled={loading} style={{ flex: 1 }}>
-                {loading ? "Starting..." : `▶ Start ${tab === "receiver" ? "Receiver" : "Sender"}`}
-              </button>
-            ) : (
-              <button className="btn btn-danger" onClick={handleStop} style={{ flex: 1 }}>
-                ⏹ Stop
-              </button>
+                <label className="field">
+                  <span>هم‌زمانی (Concurrency)</span>
+                  <input
+                    className="input mono"
+                    dir="ltr"
+                    type="number"
+                    value={concurrency}
+                    onChange={(e) => setConcurrency(+e.target.value)}
+                    min={1}
+                    max={1000}
+                  />
+                </label>
+              </>
             )}
+
+            {protocol === "tcp" && (
+              <label className="field">
+                <span>{tab === "sender" ? "پورت مقصد" : "فیلتر پورت (۰ = همه)"}</span>
+                <input
+                  className="input mono"
+                  dir="ltr"
+                  type="number"
+                  value={dstPort}
+                  onChange={(e) => setDstPort(+e.target.value)}
+                  min={0}
+                  max={65535}
+                />
+              </label>
+            )}
+
+            {tab === "receiver" && (
+              <label className="field">
+                <span>مهلت زمان انتظار (ثانیه)</span>
+                <input
+                  className="input mono"
+                  dir="ltr"
+                  type="number"
+                  value={timeout}
+                  onChange={(e) => setTimeout_(+e.target.value)}
+                  min={5}
+                  max={300}
+                />
+              </label>
+            )}
+
+            <label className="field">
+              <span>تعداد بسته به ازای هر IP</span>
+              <input
+                className="input mono"
+                dir="ltr"
+                type="number"
+                value={packetCount}
+                onChange={(e) => setPacketCount(+e.target.value)}
+                min={1}
+                max={100}
+              />
+            </label>
+
+            {tab === "receiver" && (
+              <label className="field">
+                <span>سقف افت مجاز بسته: <strong className="mono">{maxLoss}%</strong></span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={maxLoss}
+                  onChange={(e) => setMaxLoss(+e.target.value)}
+                  style={{ accentColor: "var(--accent)" }}
+                />
+              </label>
+            )}
+
+            <div className="field">
+              <span>ورودی فهرست IP</span>
+              <div className="row">
+                <label className="switch-row">
+                  <input
+                    type="radio"
+                    checked={inputType === "text"}
+                    onChange={() => setInputType("text")}
+                  />
+                  <span>ورود دستی / بارگذاری فایل</span>
+                </label>
+                <label className="switch-row">
+                  <input
+                    type="radio"
+                    checked={inputType === "file_path"}
+                    onChange={() => setInputType("file_path")}
+                  />
+                  <span>مسیر فایل روی سرور</span>
+                </label>
+              </div>
+            </div>
+
+            {inputType === "text" ? (
+              <div className="stack">
+                <div className="section-head">
+                  <span className="hint">هر خط یک IP، CIDR یا بازه (مانند 1.1.1.1 یا 10.0.0.0/24)</span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    بارگذاری فایل متنی
+                  </button>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    style={{ display: "none" }}
+                    accept=".txt,.csv,.list"
+                  />
+                </div>
+                <textarea
+                  className="input mono"
+                  dir="ltr"
+                  value={ipList}
+                  onChange={(e) => setIpList(e.target.value)}
+                  placeholder={"1.1.1.1\n10.0.0.0/24\n192.168.1.1-192.168.1.50"}
+                  rows={8}
+                />
+                <span className="hint">
+                  {ipList.trim()
+                    ? `${ipList.trim().split("\n").filter((l) => l.trim()).length} خط وارد شده`
+                    : "هیچ آدرسی وارد نشده است"}
+                </span>
+              </div>
+            ) : (
+              <label className="field">
+                <span>مسیر فایل روی سرور (مانند /opt/ips.txt)</span>
+                <input
+                  className="input mono"
+                  dir="ltr"
+                  value={serverFilePath}
+                  onChange={(e) => setServerFilePath(e.target.value)}
+                  placeholder="/etc/spoof-panel/sources.txt"
+                />
+              </label>
+            )}
+
+            {error && <div role="alert" className="banner error">{error}</div>}
+
+            <div className="row">
+              {state.status !== "running" ? (
+                <button
+                  className="btn btn-primary btn-block"
+                  onClick={handleStart}
+                  disabled={loading}
+                >
+                  {loading ? "در حال آماده‌سازی…" : `شروع آزمون ${tab === "receiver" ? "گیرنده" : "فرستنده"}`}
+                </button>
+              ) : (
+                <button className="btn btn-danger btn-block" onClick={handleStop}>
+                  توقف آزمون
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Right: Status + Results */}
-        <div className="glass-card">
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Status & Results</h3>
-
-          {/* Status */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-            <div className={`status-dot ${state.status === "running" ? "running" : state.status === "done" ? "running" : "stopped"}`} />
-            <span style={{ fontSize: 14, fontWeight: 500, textTransform: "uppercase" }}>
-              {state.status} {state.mode ? `(${state.mode})` : ""}
-            </span>
+        <div className="panel">
+          <div className="section-head">
+            <h2>وضعیت و نتایج</h2>
+            <div className="row">
+              <span className={`status-dot ${state.status === "running" ? "running" : state.status === "done" ? "ok" : "stopped"}`} />
+              <span className="mono">{state.status.toUpperCase()} {state.mode ? `(${state.mode})` : ""}</span>
+            </div>
           </div>
 
-          {/* Progress */}
           {state.status === "running" && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Progress</span>
-                <span style={{ fontSize: 12, color: "var(--accent)" }}>{state.progress}%</span>
+            <div className="stack">
+              <div className="section-head">
+                <span className="hint">پیشرفت</span>
+                <span className="mono">{state.progress}%</span>
               </div>
               <div style={{ height: 6, background: "var(--bg-secondary)", borderRadius: 3, overflow: "hidden" }}>
-                <div style={{
-                  width: `${state.progress}%`,
-                  height: "100%",
-                  background: "linear-gradient(90deg, var(--accent), #8b5cf6)",
-                  borderRadius: 3,
-                  transition: "width 0.5s",
-                }} />
+                <div
+                  style={{
+                    width: `${state.progress}%`,
+                    height: "100%",
+                    background: "linear-gradient(90deg, var(--accent), var(--accent-2))",
+                    transition: "width 0.4s",
+                  }}
+                />
               </div>
             </div>
           )}
 
-          {/* Error */}
-          {state.error && (
-            <div style={{ background: "#ef444420", border: "1px solid var(--danger)", borderRadius: 8, padding: "8px 12px", marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
-              {state.error}
-            </div>
-          )}
+          {state.error && <div role="alert" className="banner error">{state.error}</div>}
 
-          {/* Results Summary */}
           {(results.length > 0 || state.recv_count > 0) && (
-            <>
-              {/* Live indicator */}
+            <div className="stack">
               {state.status === "running" && state.mode === "receiver" && (
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
-                  padding: "8px 14px", borderRadius: 8,
-                  background: "#22c55e10", border: "1px solid #22c55e30",
-                }}>
-                  <span style={{
-                    display: "inline-block", width: 8, height: 8, borderRadius: "50%",
-                    background: "#22c55e", animation: "pulse 1.5s infinite",
-                  }} />
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--success)" }}>LIVE</span>
-                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                    Receiving packets... {state.recv_count} IPs detected so far
-                  </span>
+                <div className="banner ok">
+                  <span>در حال دریافت بسته‌ها… {state.recv_count} آدرس تا این لحظه شناسایی شد.</span>
                 </div>
               )}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
-                <div style={{ background: "var(--bg-secondary)", borderRadius: 8, padding: "12px", textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--text-primary)" }}>{totalIPs.toLocaleString()}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Total IPs</div>
+
+              <div className="stats" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+                <div className="stat">
+                  <span className="stat-label">کل آدرس‌ها</span>
+                  <strong className="stat-value">{totalIPs.toLocaleString("fa-IR")}</strong>
                 </div>
-                <div style={{ background: "#22c55e15", borderRadius: 8, padding: "12px", textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--success)" }}>{passedCount}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Passed</div>
+                <div className="stat">
+                  <span className="stat-label">پذیرفته‌شده</span>
+                  <strong className="stat-value" style={{ color: "var(--success)" }}>
+                    {passedCount.toLocaleString("fa-IR")}
+                  </strong>
                 </div>
-                <div style={{ background: "#3b82f615", borderRadius: 8, padding: "12px", textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "#3b82f6" }}>{receivedCount}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Received</div>
+                <div className="stat">
+                  <span className="stat-label">دریافت‌شده</span>
+                  <strong className="stat-value" style={{ color: "var(--accent-2)" }}>
+                    {receivedCount.toLocaleString("fa-IR")}
+                  </strong>
                 </div>
               </div>
 
-              {/* Action buttons */}
-              <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-                <button
-                  className="btn btn-ghost"
-                  onClick={handleCopyPassedIPs}
-                  style={{
-                    fontSize: 12,
-                    transition: "all 0.3s",
-                    background: copied ? "var(--success)" : undefined,
-                    color: copied ? "white" : undefined,
-                    borderColor: copied ? "var(--success)" : undefined,
-                  }}
-                >
-                  {copied ? "✓ Copied!" : "📋 Copy Passed IPs"}
+              <div className="row">
+                <button className="btn btn-ghost btn-sm" onClick={handleCopyPassedIPs}>
+                  {copied ? "کپی شد ✓" : "کپی IPهای تأییدشده"}
                 </button>
-                <button className="btn btn-ghost" onClick={handleDownloadPassedIPs} style={{ fontSize: 12 }}>
-                  📥 Download spoof-ips.txt
+                <button className="btn btn-ghost btn-sm" onClick={handleDownloadPassedIPs}>
+                  دانلود spoof-ips.txt
                 </button>
               </div>
 
-              {/* Results Table */}
-              <div style={{ maxHeight: 360, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-                <table className="table" style={{ fontSize: 13 }}>
+              <div className="table-wrap" style={{ maxHeight: 380, overflowY: "auto" }}>
+                <table className="table">
                   <thead>
                     <tr>
-                      <th>IP Address</th>
-                      <th>Received</th>
-                      <th>Loss</th>
-                      <th>Status</th>
+                      <th>آدرس IP</th>
+                      <th>دریافتی / ارسالی</th>
+                      <th>افت بسته</th>
+                      <th>وضعیت</th>
                     </tr>
                   </thead>
                   <tbody>
                     {results.map((r, i) => (
                       <tr key={i}>
-                        <td style={{ fontFamily: "'JetBrains Mono', monospace" }}>{r.ip}</td>
-                        <td>{r.received}/{r.sent}</td>
-                        <td style={{ color: lossColor(r.loss_pct), fontWeight: 600 }}>
+                        <td className="mono" dir="ltr">{r.ip}</td>
+                        <td className="mono">{r.received} / {r.sent}</td>
+                        <td className="mono" style={{ color: r.loss_pct <= 10 ? "var(--success)" : r.loss_pct <= 30 ? "var(--warning)" : "var(--danger)" }}>
                           {r.loss_pct.toFixed(1)}%
                         </td>
                         <td>
-                          <span style={{
-                            display: "inline-block",
-                            padding: "2px 8px",
-                            borderRadius: 4,
-                            fontSize: 11,
-                            fontWeight: 600,
-                            background: r.passed ? "#22c55e20" : "#ef444420",
-                            color: r.passed ? "var(--success)" : "var(--danger)",
-                          }}>
-                            {r.passed ? "PASS" : "FAIL"}
+                          <span className={`pill ${r.passed ? "ok" : "err"}`}>
+                            {r.passed ? "موفق" : "رد"}
                           </span>
                         </td>
                       </tr>
@@ -443,15 +464,15 @@ export default function TesterPage() {
                   </tbody>
                 </table>
               </div>
-            </>
+            </div>
           )}
 
           {results.length === 0 && state.status === "idle" && (
-            <div style={{ textAlign: "center", padding: 48, color: "var(--text-secondary)" }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>🔬</div>
-              <p>Start a test to see results here.</p>
-              <p style={{ fontSize: 12, marginTop: 8 }}>
-                Run <strong>receiver</strong> on remote, then <strong>sender</strong> on local.
+            <div className="empty">
+              <div className="empty-icon">🔬</div>
+              <h3>آزمونی در جریان نیست</h3>
+              <p>
+                برای شروع، ابتدا گیرنده را در سرور خارج روشن کن و سپس فرستنده را در ایران اجرا کن.
               </p>
             </div>
           )}

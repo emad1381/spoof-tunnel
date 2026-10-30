@@ -2,10 +2,11 @@ package db
 
 import (
 	"fmt"
-	"github.com/ParsaKSH/spoof-tunnel/internal/l3"
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/ParsaKSH/spoof-tunnel/internal/l3"
 )
 
 // Validate checks the actual IPv4 datagram relay contract before persisting it.
@@ -101,5 +102,30 @@ func (c TunnelInstance) L3Config() l3.Config {
 	if c.Mode == "remote" {
 		peer, sendPort, recvPort = c.ClientIP, c.ClientPort, c.ListenPort
 	}
-	return l3.Config{Role: c.Mode, LocalIP: c.LocalIP, PeerIP: peer, SpoofSource: c.SpoofIP, PeerSpoof: c.PeerSpoofIP, Send: c.SendTransport, Receive: c.RecvTransport, SendPort: sendPort, ReceivePort: recvPort, Interface: c.TunInterface, Address: c.TunAddress, PeerAddress: c.TunPeer, MTU: c.TunMTU, PSK: c.PSK}
+	var sources []string
+	if strings.TrimSpace(c.SpoofIPList) != "" {
+		for _, line := range strings.Split(c.SpoofIPList, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				sources = append(sources, line)
+			}
+		}
+	}
+	return l3.Config{
+		Role:         c.Mode,
+		LocalIP:      c.LocalIP,
+		PeerIP:       peer,
+		SpoofSource:  c.SpoofIP,
+		SpoofSources: sources,
+		PeerSpoof:    c.PeerSpoofIP,
+		Send:         c.SendTransport,
+		Receive:      c.RecvTransport,
+		SendPort:     sendPort,
+		ReceivePort:  recvPort,
+		Interface:    c.TunInterface,
+		Address:      c.TunAddress,
+		PeerAddress:  c.TunPeer,
+		MTU:          c.TunMTU,
+		PSK:          c.PSK,
+	}
 }

@@ -137,7 +137,7 @@ func (m *Manager) StartInstance(id uint) error {
 
 	// Start the binary
 	if cfg.Engine == "tun" {
-		inst.cmd = exec.Command(filepath.Join(filepath.Dir(m.binaryPath), "spoof-l3"), "--config", configPath)
+		inst.cmd = exec.Command(m.resolveL3Binary(), "--config", configPath)
 	} else {
 		inst.cmd = exec.Command(m.binaryPath, "run", "--config", configPath)
 	}
@@ -380,6 +380,25 @@ func (m *Manager) BinaryPath() string {
 }
 
 // ── Internal ──
+
+func (m *Manager) resolveL3Binary() string {
+	candidates := []string{
+		filepath.Join(m.configDir, "spoof-l3"),
+		filepath.Join(filepath.Dir(m.binaryPath), "spoof-l3"),
+		"/etc/spoof-panel/spoof-l3",
+		"/usr/local/bin/spoof-l3",
+		"spoof-l3",
+	}
+	for _, p := range candidates {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("spoof-l3"); err == nil {
+		return p
+	}
+	return filepath.Join(m.configDir, "spoof-l3")
+}
 
 func (m *Manager) configFilePath(id uint) string {
 	return filepath.Join(m.configDir, fmt.Sprintf("tunnel-config-%d.json", id))

@@ -21,10 +21,13 @@ import (
 
 // PacketConn owns exactly one receive protocol and one raw send socket.
 type PacketConn struct {
-	cfg  Config
-	recv *net.IPConn
-	send int
-	mu   sync.Mutex
+	cfg     Config
+	recv    *net.IPConn
+	send    int
+	sources [][4]byte
+	srcIdx  uint64
+	peerIP  [4]byte
+	mu      sync.Mutex
 }
 
 func NewPacketConn(c Config) (*PacketConn, error) {
@@ -43,8 +46,29 @@ func NewPacketConn(c Config) (*PacketConn, error) {
 		return nil, err
 	}
 	_ = recv.SetReadBuffer(4 * 1024 * 1024)
-	return &PacketConn{cfg: c, recv: recv, send: fd}, nil
+
+	rawSources, err := c.Sources()
+	if err != nil {
+		recv.Close()
+		syscall.Close(fd)
+		return nil, err
+	}
+	sources := make([][4]byte, len(rawSources))
+	for i, s := range rawSources {
+		copy(sources[i][:], s.To4())
+	}
+	var peer [4]byte
+	copy(peer[:], net.ParseIP(c.PeerIP).To4())
+
+	return &PacketConn{
+		cfg:     c,
+		recv:    recv,
+		send:    fd,
+		sources: sources,
+		peerIP:  peer,
+	}, nil
 }
+
 func checksum(b []byte) uint16 {
 	var n uint32
 	for len(b) > 1 {
@@ -59,6 +83,7 @@ func checksum(b []byte) uint16 {
 	}
 	return ^uint16(n)
 }
+
 func (p *PacketConn) Send(payload []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -75,8 +100,12 @@ func (p *PacketConn) Send(payload []byte) error {
 	binary.BigEndian.PutUint16(b[2:4], uint16(len(b)))
 	b[8] = 64
 	b[9] = byte(proto)
-	copy(b[12:16], net.ParseIP(p.cfg.SpoofSource).To4())
-	copy(b[16:20], net.ParseIP(p.cfg.PeerIP).To4())
+
+	// Rotate source IPv4 round-robin when multiple sources are configured.
+	src := p.sources[p.srcIdx%uint64(len(p.sources))]
+	p.srcIdx++
+	copy(b[12:16], src[:])
+	copy(b[16:20], p.peerIP[:])
 	binary.BigEndian.PutUint16(b[10:12], checksum(b[:20]))
 	h := b[20 : 20+extra]
 	switch proto {
@@ -114,18 +143,18 @@ func (p *PacketConn) Send(payload []byte) error {
 		}
 		binary.BigEndian.PutUint16(h[off:off+2], sum)
 	}
-	var dst [4]byte
-	copy(dst[:], b[16:20])
-	return syscall.Sendto(p.send, b, 0, &syscall.SockaddrInet4{Addr: dst})
+	return syscall.Sendto(p.send, b, 0, &syscall.SockaddrInet4{Addr: p.peerIP})
 }
+
 func (p *PacketConn) Receive() ([]byte, error) {
 	b := make([]byte, 65535)
+	expectedPeer := net.ParseIP(p.cfg.PeerSpoof)
 	for {
 		n, addr, err := p.recv.ReadFromIP(b)
 		if err != nil {
 			return nil, err
 		}
-		if !addr.IP.Equal(net.ParseIP(p.cfg.PeerSpoof)) {
+		if !addr.IP.Equal(expectedPeer) {
 			continue
 		}
 		data := b[:n]
@@ -161,7 +190,13 @@ func (p *PacketConn) Receive() ([]byte, error) {
 		}
 	}
 }
-func (p *PacketConn) Close() { p.recv.Close(); p.mu.Lock(); defer p.mu.Unlock(); syscall.Close(p.send) }
+
+func (p *PacketConn) Close() {
+	p.recv.Close()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	syscall.Close(p.send)
+}
 
 func openTun(c Config) (*os.File, error) {
 	fd, err := syscall.Open("/dev/net/tun", syscall.O_RDWR|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
@@ -186,15 +221,6 @@ func openTun(c Config) (*os.File, error) {
 	return f, nil
 }
 
-type Stats struct {
-	Event    string `json:"event"`
-	Peer     bool   `json:"peer_connected"`
-	TX       uint64 `json:"tx_bytes"`
-	RX       uint64 `json:"rx_bytes"`
-	Drops    uint64 `json:"drops"`
-	LastPeer int64  `json:"last_peer"`
-}
-
 // Run carries IPv4 packets, plus authenticated challenge/response heartbeats.
 func Run(ctx context.Context, c Config) error {
 	if err := c.Validate(); err != nil {
@@ -214,21 +240,29 @@ func Run(ctx context.Context, c Config) error {
 		return err
 	}
 	defer tun.Close()
+
 	var mu sync.Mutex
 	stats := Stats{Event: "emad_stats"}
 	var challenge [16]byte
+	var challengeSent time.Time
 	var pending bool
+
 	emit := func() {
 		mu.Lock()
 		s := stats
 		s.Peer = s.LastPeer > time.Now().Add(-15*time.Second).Unix()
+		if !s.Peer {
+			s.RTTMs = 0
+		}
 		mu.Unlock()
 		b, _ := json.Marshal(s)
 		log.Print(string(b))
 	}
+
 	errCh := make(chan error, 2)
 	done := make(chan struct{})
 	defer close(done)
+
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -237,6 +271,7 @@ func Run(ctx context.Context, c Config) error {
 		case <-done:
 		}
 	}()
+
 	go func() {
 		b := make([]byte, 65535)
 		for {
@@ -255,12 +290,14 @@ func Run(ctx context.Context, c Config) error {
 			mu.Lock()
 			if err == nil {
 				stats.TX += uint64(n)
+				stats.TXPackets++
 			} else {
 				stats.Drops++
 			}
 			mu.Unlock()
 		}
 	}()
+
 	go func() {
 		for {
 			frame, err := conn.Receive()
@@ -286,6 +323,7 @@ func Run(ctx context.Context, c Config) error {
 				}
 				mu.Lock()
 				stats.RX += uint64(len(data))
+				stats.RXPackets++
 				mu.Unlock()
 			case 2:
 				if len(data) == 16 {
@@ -295,13 +333,20 @@ func Run(ctx context.Context, c Config) error {
 				mu.Lock()
 				if pending && len(data) == 16 && string(data) == string(challenge[:]) {
 					stats.LastPeer = time.Now().Unix()
+					if !challengeSent.IsZero() {
+						stats.RTTMs = float64(time.Since(challengeSent).Microseconds()) / 1000.0
+					}
 					pending = false
 				}
 				mu.Unlock()
 			}
 		}
 	}()
-	log.Printf("TUN ready: interface=%s address=%s peer=%s carrier=%s/%s", c.Interface, c.Address, c.PeerAddress, c.Send, c.Receive)
+
+	sources, _ := c.Sources()
+	log.Printf("TUN ready v%s: interface=%s address=%s peer=%s carrier=%s/%s sources=%d",
+		Version, c.Interface, c.Address, c.PeerAddress, c.Send, c.Receive, len(sources))
+
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -316,6 +361,7 @@ func Run(ctx context.Context, c Config) error {
 		case <-ticker.C:
 			mu.Lock()
 			_, err = rand.Read(challenge[:])
+			challengeSent = time.Now()
 			pending = true
 			payload := append([]byte(nil), challenge[:]...)
 			mu.Unlock()

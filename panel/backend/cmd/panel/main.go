@@ -224,7 +224,7 @@ func main() {
 	addr := fmt.Sprintf("0.0.0.0:%d", listenPort)
 	fullURL := fmt.Sprintf("http://0.0.0.0:%d/%s/", listenPort, webPath)
 	log.Printf("╔══════════════════════════════════════════════════╗")
-	log.Printf("║         EMAD Spoof Tunnel v0.1.0                       ║")
+	log.Printf("║         EMAD Spoof Tunnel v0.2.0                 ║")
 	log.Printf("║  %-48s║", fullURL)
 	log.Printf("╚══════════════════════════════════════════════════╝")
 
@@ -258,7 +258,7 @@ func runSetup(database *gorm.DB, username, password string, port int) {
 		username = auth.GenerateRandomString(8)
 	}
 	if password == "" {
-		password = auth.GenerateRandomString(12)
+		password = auth.GenerateRandomString(16)
 	}
 	if port == 0 {
 		port = auth.GenerateRandomPort()
