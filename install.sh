@@ -8,16 +8,29 @@ printf '\n  ╔═════════════════════�
 printf '  ║             SPOOF TUNNEL INSTALLER               ║\n'
 printf '  ╚══════════════════════════════════════════════════╝\n\n'
 
-version=${SPOOF_RELEASE:-v0.2.0}
-[[ "$version" =~ ^(emad-)?v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid release version.' >&2; exit 1; }
+base=https://github.com/emad1381/spoof-tunnel/releases/download
+asset=spoof-tunnel-linux-amd64.tar.gz
 
-echo "  [1/3] Downloading package $version..."
+# Try the requested tag first, then the current and legacy tag names so the
+# one-line installer keeps working during release transitions.
+candidates=()
+[[ -n "${SPOOF_RELEASE:-}" ]] && candidates+=("$SPOOF_RELEASE")
+candidates+=("v0.2.0" "emad-v0.2.0")
+
 work=$(mktemp -d -t spoof-install.XXXXXX)
 trap 'rm -rf -- "$work"' EXIT
 
-curl -fsSL --retry 3 --proto '=https' \
- "https://github.com/emad1381/spoof-tunnel/releases/download/$version/spoof-tunnel-linux-amd64.tar.gz" \
- -o "$work/package.tar.gz"
+echo "  [1/3] Downloading package..."
+downloaded=""
+for tag in "${candidates[@]}"; do
+  [[ "$tag" =~ ^(emad-)?v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag: $tag" >&2; exit 1; }
+  if curl -fsSL --retry 2 --proto '=https' "$base/$tag/$asset" -o "$work/package.tar.gz" 2>/dev/null; then
+    downloaded=$tag
+    break
+  fi
+done
+[[ -n "$downloaded" ]] || { echo 'Download failed: no release package available.' >&2; exit 1; }
+echo "        using release $downloaded"
 
 echo "  [2/3] Extracting files..."
 tar -xzf "$work/package.tar.gz" -C "$work"
