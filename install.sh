@@ -15,7 +15,7 @@ asset=spoof-tunnel-linux-amd64.tar.gz
 # one-line installer keeps working during release transitions.
 candidates=()
 [[ -n "${SPOOF_RELEASE:-}" ]] && candidates+=("$SPOOF_RELEASE")
-candidates+=("v0.2.1" "v0.2.0" "emad-v0.2.0")
+candidates+=("v0.2.2" "v0.2.1" "v0.2.0" "emad-v0.2.0")
 
 work=$(mktemp -d -t spoof-install.XXXXXX)
 trap 'rm -rf -- "$work"' EXIT
