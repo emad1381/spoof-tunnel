@@ -13,14 +13,18 @@ import (
 
 // TesterConfig holds the configuration for a tester run.
 type TesterConfig struct {
-	Mode          string  `json:"mode"`           // "sender" or "receiver"
-	Protocol      string  `json:"protocol"`       // "tcp" or "icmp"
-	DstIP         string  `json:"dst_ip"`         // destination IP (sender mode)
-	DstPort       int     `json:"dst_port"`       // destination port (TCP only)
-	Timeout       int     `json:"timeout"`        // receiver timeout in seconds
-	PacketCount   int     `json:"packet_count"`   // packets per source IP
+	Mode          string  `json:"mode"`            // "sender" or "receiver"
+	Protocol      string  `json:"protocol"`        // "tcp" or "icmp"
+	DstIP         string  `json:"dst_ip"`          // destination IP (sender mode)
+	DstPort       int     `json:"dst_port"`        // destination port (TCP only)
+	Timeout       int     `json:"timeout"`         // receiver timeout in seconds
+	PacketCount   int     `json:"packet_count"`    // packets per source IP
 	MaxPacketLoss float64 `json:"max_packet_loss"` // max allowed loss %
-	Concurrency   int     `json:"concurrency"`    // sender concurrency
+	// Concurrency is accepted for API compatibility but intentionally
+	// unused: sending is sequential so per-IP counts stay exact. The
+	// panel no longer offers a concurrency control (it used to promise
+	// parallelism that never happened).
+	Concurrency int `json:"concurrency"`
 }
 
 // TesterResult holds the result for a single IP.

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -443,8 +444,11 @@ func (s *Server) handleGetInstanceSpoofIPs(c *gin.Context) {
 
 	content := strings.TrimSpace(inst.SpoofIPList)
 	count := 0
-	if content != "" {
-		count = len(strings.Split(content, "\n"))
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			count++
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"content": content, "count": count})
@@ -465,14 +469,27 @@ func (s *Server) handleSetInstanceSpoofIPs(c *gin.Context) {
 	}
 
 	content := strings.TrimSpace(req.Content)
+	// Validate here, not only at tunnel start: the L3 engine accepts
+	// one unicast IPv4 per line. CIDR prefixes and dash ranges are
+	// rejected with a clear error instead of being saved and then
+	// failing cryptically when the tunnel starts (the old UI text
+	// wrongly claimed they were supported).
+	count := 0
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		ip := net.ParseIP(line)
+		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("spoof IP %q must be a single unicast IPv4 address (CIDR and dash ranges are not supported here)", line)})
+			return
+		}
+		count++
+	}
 	if err := s.db.Model(&db.TunnelInstance{}).Where("id = ?", id).Update("spoof_ip_list", content).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-
-	count := 0
-	if content != "" {
-		count = len(strings.Split(content, "\n"))
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "count": count})
@@ -523,6 +540,34 @@ func (s *Server) handleTesterStart(c *gin.Context) {
 
 	if ranges.Total() == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "IP list is empty"})
+		return
+	}
+
+	// Validate synchronously here, not inside the background goroutine:
+	// without this, a sender with an unknown protocol silently finished
+	// with zero packets sent, and an invalid destination only surfaced
+	// later as an async status error.
+	if req.Protocol != "tcp" && req.Protocol != "icmp" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "protocol must be 'tcp' or 'icmp'"})
+		return
+	}
+	if req.Mode == "sender" {
+		ip := net.ParseIP(req.DstIP)
+		if ip == nil || ip.To4() == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "dst_ip must be a valid IPv4 address"})
+			return
+		}
+	}
+	if req.PacketCount < 1 || req.PacketCount > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "packet_count must be 1–1000"})
+		return
+	}
+	if req.Timeout < 1 || req.Timeout > 3600 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "timeout must be 1–3600 seconds"})
+		return
+	}
+	if req.MaxPacketLoss < 0 || req.MaxPacketLoss > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "max_packet_loss must be 0–100"})
 		return
 	}
 

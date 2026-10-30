@@ -7,12 +7,10 @@ test "$(go env GOOS)" = linux || { echo 'Build the Linux service on Linux/WSL.' 
 (cd panel/frontend && npm ci --no-audit --no-fund && npm run build)
 rm -rf panel/backend/cmd/panel/web && mkdir -p panel/backend/cmd/panel/web dist
 cp -a panel/frontend/out/. panel/backend/cmd/panel/web/
-CGO_ENABLED=0 go build -trimpath -o dist/spoof-l3 ./cmd/spoof-l3
-# Stamp the panel release version into the binary (see panelVersion in
-# panel/backend/cmd/panel/main.go). SPOOF_VERSION wins; otherwise use
-# the current git tag, so a release build always reports its own tag
-# in --version, the startup banner and the panel header.
+# Resolve the release version once and stamp it into both binaries, so
+# the panel header and `spoof-l3 --version` can never disagree again.
 VERSION="${SPOOF_VERSION:-$(git describe --tags --exact-match 2>/dev/null || git describe --tags --always 2>/dev/null || echo dev)}"
+CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/ParsaKSH/spoof-tunnel/internal/l3.Version=$VERSION" -o dist/spoof-l3 ./cmd/spoof-l3
 (cd panel/backend && CGO_ENABLED=0 go build -trimpath -ldflags "-X main.panelVersion=$VERSION" -o ../../dist/spoof-panel ./cmd/panel)
 echo "Panel version stamped: $VERSION"
 # Packaging writes LF-only checksums and normalizes text files for Linux.

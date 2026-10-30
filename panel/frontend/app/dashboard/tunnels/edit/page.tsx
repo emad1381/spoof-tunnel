@@ -391,7 +391,7 @@ function EditContent() {
           </div>
           <p className="page-intro">
             هستهٔ تونل L3 در هنگام ارسال بسته‌ها به صورت گردشی (Round-Robin) بدون توقف از این آدرس‌ها به عنوان مبدأ جعلی استفاده می‌کند.
-            پشتیبانی از تک IP، پیشوندهای CIDR (مثلاً 10.0.0.0/24) و بازه‌های خط فاصله (192.168.1.1-192.168.1.50).
+            فقط یک آدرس IPv4 در هر خط بنویس؛ پیشوند CIDR و بازهٔ خط فاصله اینجا پشتیبانی نمی‌شود و ذخیرهٔ آن‌ها باعث خطا در شروع تونل می‌شود. برای آزمون گستره‌های بزرگ، از صفحهٔ «آزمون اسپوف» استفاده کن که CIDR و بازه را می‌پذیرد.
           </p>
           <textarea
             className="input mono"
@@ -400,7 +400,7 @@ function EditContent() {
             value={spoofIPs}
             disabled={running}
             onChange={(e) => setSpoofIPs(e.target.value)}
-            placeholder={"198.51.100.10\n198.51.100.0/28\n203.0.113.5-203.0.113.20"}
+            placeholder={"198.51.100.10\n203.0.113.5\n203.0.113.6"}
             spellCheck={false}
           />
           {running && <p className="hint" style={{ color: "var(--accent-amber)" }}>تونل در حال حاضر فعال است؛ برای ذخیرهٔ لیست جدید ابتدا اتصال را متوقف کنید.</p>}

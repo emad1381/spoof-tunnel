@@ -53,7 +53,6 @@ export default function TesterPage() {
   const [timeout, setTimeout_] = useState(30);
   const [packetCount, setPacketCount] = useState(10);
   const [maxLoss, setMaxLoss] = useState(20);
-  const [concurrency, setConcurrency] = useState(100);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const pollRef = useRef<NodeJS.Timeout | null>(null);
@@ -102,7 +101,6 @@ export default function TesterPage() {
         timeout: timeout,
         packet_count: packetCount,
         max_packet_loss: maxLoss,
-        concurrency,
       });
       setState({
         status: "running",
@@ -230,20 +228,9 @@ export default function TesterPage() {
                     required
                   />
                 </label>
-                <label className="field">
-                  <span>هم‌زمانی (Concurrency)</span>
-                  <input
-                    className="input mono"
-                    dir="ltr"
-                    type="number"
-                    value={concurrency}
-                    onChange={(e) => setConcurrency(+e.target.value)}
-                    min={1}
-                    max={1000}
-                  />
-                </label>
               </>
             )}
+            <p className="hint">آزمون IP به IP و به‌صورت ترتیبی اجرا می‌شود تا شمارش هر IP دقیق بماند؛ برای گستره‌های بزرگ، زمان اجرا متناسب با تعداد IPها افزایش می‌یابد.</p>
 
             {protocol === "tcp" && (
               <label className="field">

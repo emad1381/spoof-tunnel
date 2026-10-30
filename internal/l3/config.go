@@ -7,8 +7,15 @@ import (
 	"regexp"
 )
 
-// Version is reported in logs and dashboards.
-const Version = "0.2.0"
+// Version is reported in logs and in `spoof-l3 --version`.
+// Set at build time with:
+//
+//	go build -ldflags "-X github.com/ParsaKSH/spoof-tunnel/internal/l3.Version=vX.Y.Z"
+//
+// and defaults to "dev" for an unstamped build, so a build that was not
+// stamped with a release can never masquerade as one (the old hard-coded
+// 0.2.0 kept printing after newer panel releases).
+var Version = "dev"
 
 // Config describes one authenticated IPv4 point-to-point TUN link.
 type Config struct {

@@ -344,7 +344,7 @@ func Run(ctx context.Context, c Config) error {
 	}()
 
 	sources, _ := c.Sources()
-	log.Printf("TUN ready v%s: interface=%s address=%s peer=%s carrier=%s/%s sources=%d",
+	log.Printf("TUN ready %s: interface=%s address=%s peer=%s carrier=%s/%s sources=%d",
 		Version, c.Interface, c.Address, c.PeerAddress, c.Send, c.Receive, len(sources))
 
 	ticker := time.NewTicker(3 * time.Second)

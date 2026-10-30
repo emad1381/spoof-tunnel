@@ -31,7 +31,9 @@ var webFS embed.FS
 // panelVersion is the panel release version shown in the CLI banner,
 // in --version output and, via /api/system, in the panel header.
 // It is set at build time with:
-//   go build -ldflags "-X main.panelVersion=vX.Y.Z" ./cmd/panel
+//
+//	go build -ldflags "-X main.panelVersion=vX.Y.Z" ./cmd/panel
+//
 // and defaults to "dev" for a plain local build, so a build that was
 // not stamped with a release can never masquerade as one.
 var panelVersion = "dev"
