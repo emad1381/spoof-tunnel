@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.26'
   NODE_VERSION: '20'
 
 jobs:
@@ -108,8 +108,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         working-directory: panel/backend
         run: |
-          go build -ldflags="-s -w" \
-            -o ../../spoof-panel-linux-${{ matrix.goarch }} ./cmd/panel/
+          VERSION="${GITHUB_REF_NAME#panel-}"
+          go build -ldflags="-s -w -X main.panelVersion=$VERSION" -o ../../spoof-panel-linux-${{ matrix.goarch }} ./cmd/panel/
+          ./../../spoof-panel-linux-${{ matrix.goarch }} --version
 
       - name: Verify binary
         run: |
@@ -135,34 +136,46 @@ jobs:
           name: panel-amd64
 
       - name: Run setup test
+        id: setup
         run: |
           chmod +x spoof-panel-linux-amd64
-          SPOOF_DATA_DIR=/tmp/test-panel ./spoof-panel-linux-amd64 \
+          SETUP_OUTPUT=$(SPOOF_DATA_DIR=/tmp/test-panel ./spoof-panel-linux-amd64 \
             -setup-user ci-test \
             -setup-pass ci-pass-123 \
-            -setup-port 19999
+            -setup-port 19999)
+          echo "$SETUP_OUTPUT"
+          WEB_PATH=$(echo "$SETUP_OUTPUT" | grep -oP 'Web Path:\s+\K/\S+')
+          echo "web_path=$WEB_PATH" >> $GITHUB_OUTPUT
 
       - name: Run server test
         run: |
           SPOOF_DATA_DIR=/tmp/test-panel ./spoof-panel-linux-amd64 -port 19999 &
           sleep 3
+          BASE="http://localhost:19999${{ steps.setup.outputs.web_path }}"
+
+          # Test root redirect
+          [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:19999/)" = "302" ]
 
           # Test auth
-          curl -sf http://localhost:19999/api/auth/check
+          curl -sf "$BASE/api/auth/check"
 
           # Test login
-          TOKEN=$(curl -sf -X POST http://localhost:19999/api/auth/login \
+          TOKEN=$(curl -sf -X POST "$BASE/api/auth/login" \
             -H "Content-Type: application/json" \
             -d '{"username":"ci-test","password":"ci-pass-123"}' | \
             grep -o '"token":"[^"]*"' | cut -d'"' -f4)
           [ -n "$TOKEN" ]
 
           # Test dashboard
-          curl -sf http://localhost:19999/api/dashboard \
-            -H "Authorization: Bearer $TOKEN" | grep -q "tunnel_status"
+          curl -sf "$BASE/api/dashboard" \
+            -H "Authorization: Bearer $TOKEN" | grep -q "running_count"
+
+          # Test system
+          curl -sf "$BASE/api/system" \
+            -H "Authorization: Bearer $TOKEN" | grep -q "panel_version"
 
           # Test frontend
-          curl -sf http://localhost:19999/ | grep -q "Spoof Panel"
+          curl -sfL http://localhost:19999/ | grep -q "boot-screen"
 
           echo "✓ All smoke tests passed"
           kill %1
