@@ -67,6 +67,11 @@ export const api = {
   instanceRestart: (id: number) => request(`/instances/${id}/restart`, { method: 'POST' }),
   instanceStatus: (id: number) => request(`/instances/${id}/status`),
 
+  // Reverse-tunnel forward rules
+  listForwards: (id: number) => request(`/instances/${id}/forwards`),
+  createForward: (id: number, data: { name: string; protocol: string; listen_port: number; target_port: number; enabled: boolean }) => request(`/instances/${id}/forwards`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteForward: (id: number, ruleId: number) => request(`/instances/${id}/forwards/${ruleId}`, { method: 'DELETE' }),
+
   // Instance Spoof IPs
   getInstanceSpoofIPs: (id: number) => request(`/instances/${id}/spoof-ips`),
   setInstanceSpoofIPs: (id: number, content: string) =>

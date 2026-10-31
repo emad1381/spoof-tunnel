@@ -15,6 +15,7 @@ import (
 
 	"github.com/ParsaKSH/spoof-tunnel/internal/l3"
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/db"
+	"github.com/ParsaKSH/spoof-tunnel/panel/internal/forward"
 	"gorm.io/gorm"
 )
 
@@ -47,15 +48,20 @@ type Instance struct {
 	subMu sync.Mutex
 	subID int
 	subs  map[int]chan string
+
+	// Reverse-tunnel forwarders for this instance, by rule ID.
+	fwdMu      sync.Mutex
+	forwarders map[uint]*forward.Forwarder
 }
 
 func newInstance(id uint) *Instance {
 	return &Instance{
-		ID:       id,
-		status:   StatusStopped,
-		logLines: make([]string, 0, 1000),
-		maxLogs:  1000,
-		subs:     make(map[int]chan string),
+		ID:         id,
+		status:     StatusStopped,
+		logLines:   make([]string, 0, 1000),
+		maxLogs:    1000,
+		subs:       make(map[int]chan string),
+		forwarders: make(map[uint]*forward.Forwarder),
 	}
 }
 
@@ -183,6 +189,9 @@ func (m *Manager) StartInstance(id uint) error {
 	done := inst.done
 	go func() {
 		err := cmd.Wait()
+		// If the tunnel process died on its own, its entry forwarders
+		// must not keep accepting clients into a dead TUN.
+		m.StopForwarders(id)
 		inst.mu.Lock()
 		if inst.cmd == cmd {
 			inst.cmd = nil
@@ -200,11 +209,18 @@ func (m *Manager) StartInstance(id uint) error {
 	}()
 
 	log.Printf("[manager] started instance %d (%s)", id, cfg.Name)
+	// Entry forwarders only make sense once the TUN is up; a failed
+	// bind is logged by StartForwarders and shown in the UI, it does
+	// not roll back the tunnel itself.
+	m.StartForwarders(id)
 	return nil
 }
 
 // StopInstance stops a tunnel instance
 func (m *Manager) StopInstance(id uint) error {
+	// Stop the entry first: no new client should be accepted once the
+	// tunnel underneath is going away.
+	m.StopForwarders(id)
 	inst := m.getInstance(id)
 	inst.mu.Lock()
 	if inst.cmd == nil || inst.cmd.Process == nil {

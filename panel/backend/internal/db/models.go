@@ -57,6 +57,32 @@ type TunnelInstance struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ForwardRule is one reverse-tunnel entry point attached to a TUN tunnel.
+//
+// Semantics (see package forward): on the entry server (typically Iran)
+// the panel listens on ListenPort for end-user clients and pipes each
+// TCP connection to the tunnel peer's TUN address (TunPeer) on
+// TargetPort, where the real service (e.g. 3x-ui / Xray) listens.
+// Target IP is deliberately NOT stored: it is always the owning
+// instance's TunPeer, so a rule can never drift into proxying to an
+// arbitrary public address.
+//
+// v1 is TCP only. Protocol is stored so a future UDP implementation can
+// reuse the table without a migration, but any non-"tcp" value is
+// rejected by the API until that implementation exists.
+type ForwardRule struct {
+	ID         uint   `gorm:"primarykey" json:"id"`
+	InstanceID uint   `gorm:"index;not null" json:"instance_id"`
+	Name       string `gorm:"not null" json:"name"`
+	Protocol   string `gorm:"default:tcp" json:"protocol"`
+	ListenPort int    `gorm:"not null" json:"listen_port"`
+	TargetPort int    `gorm:"not null" json:"target_port"`
+	Enabled    bool   `gorm:"default:true" json:"enabled"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // TrafficStat stores traffic snapshots
 type TrafficStat struct {
 	ID            uint      `gorm:"primarykey" json:"id"`
@@ -84,6 +110,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	if err := db.AutoMigrate(
 		&User{},
 		&TunnelInstance{},
+		&ForwardRule{},
 		&TrafficStat{},
 		&Setting{},
 	); err != nil {

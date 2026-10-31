@@ -316,6 +316,7 @@ func (s *Server) handleDeleteInstance(c *gin.Context) {
 
 	// Stop if running
 	s.manager.RemoveInstance(id)
+	_ = s.db.Where("instance_id = ?", id).Delete(&db.ForwardRule{}).Error
 
 	if err := s.db.Delete(&db.TunnelInstance{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

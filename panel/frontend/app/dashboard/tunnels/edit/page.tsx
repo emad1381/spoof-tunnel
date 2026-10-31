@@ -16,6 +16,13 @@ const CARRIERS = [
 
 type Instance = Record<string, string | number | boolean | null | undefined>;
 
+type ForwardStatus = {
+  rule: { id: number; name: string; protocol: string; listen_port: number; target_port: number; enabled: boolean };
+  target: string;
+  listening: boolean;
+  stats: { listening: boolean; connections: number; bytes_up: number; bytes_down: number; last_error: string };
+};
+
 const STATUS: Record<string, string> = {
   running: "در حال اجرا",
   stopped: "متوقف",
@@ -56,7 +63,11 @@ function EditContent() {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<"config" | "ips" | "logs">("config");
+  const [tab, setTab] = useState<"config" | "ips" | "logs" | "forwards">("config");
+  const [forwards, setForwards] = useState<ForwardStatus[]>([]);
+  const [newListen, setNewListen] = useState(443);
+  const [newTarget, setNewTarget] = useState(443);
+  const [newFwdName, setNewFwdName] = useState("");
   const [spoofIPs, setSpoofIPs] = useState("");
   const [savedIPs, setSavedIPs] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -92,6 +103,50 @@ function EditContent() {
     if (!id) return;
     api.getInstanceSpoofIPs(id).then((d) => setSpoofIPs(d.content || "")).catch(() => {});
   }, [id]);
+
+  const loadForwards = useCallback(async () => {
+    if (!id) return;
+    try {
+      setForwards(await api.listForwards(id));
+    } catch {
+      setForwards([]);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (tab !== "forwards") return;
+    void loadForwards();
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void loadForwards();
+    }, 3000);
+    return () => clearInterval(t);
+  }, [tab, loadForwards]);
+
+  const addForward = async () => {
+    setError("");
+    try {
+      await api.createForward(id, { name: newFwdName, protocol: "tcp", listen_port: newListen, target_port: newTarget, enabled: true });
+      toast.success("فوروارد ساخته شد و با تونل در حال اجرا، همین حالا گوش می‌کند.");
+      await loadForwards();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "ساخت فوروارد ناموفق بود";
+      setError(msg);
+      toast.error(msg);
+    }
+  };
+
+  const removeForward = async (ruleId: number) => {
+    setError("");
+    try {
+      await api.deleteForward(id, ruleId);
+      toast.success("فوروارد حذف شد.");
+      await loadForwards();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "حذف فوروارد ناموفق بود";
+      setError(msg);
+      toast.error(msg);
+    }
+  };
 
   // Live logs over WebSocket
   useEffect(() => {
@@ -250,6 +305,7 @@ function EditContent() {
         {([
           ["config", "تنظیمات اتصال"],
           ["ips", "استخر IPهای اسپوف"],
+          ["forwards", "فوروارد معکوس (ورودی کلاینت)"],
           ["logs", "لاگ زندهٔ تونل"],
         ] as const).map(([k, label]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={`tab ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>
@@ -404,6 +460,57 @@ function EditContent() {
             spellCheck={false}
           />
           {running && <p className="hint" style={{ color: "var(--accent-amber)" }}>تونل در حال حاضر فعال است؛ برای ذخیرهٔ لیست جدید ابتدا اتصال را متوقف کنید.</p>}
+        </section>
+      )}
+
+      {tab === "forwards" && (
+        <section className="panel">
+          <div className="section-head">
+            <div>
+              <h2>فوروارد معکوس: ورودی کلاینت روی همین سرور</h2>
+              <span className="hint">فقط برای تونل TUN</span>
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={() => void loadForwards()}>به‌روزرسانی</button>
+          </div>
+          <p className="page-intro">
+            کلاینت (گوشی/لپتاپ) به IP عمومی همین سرور روی «پورت ورودی» وصل می‌شود و پنل، اتصال را از داخل تونل به IP داخلی طرف مقابل روی «پورت مقصد» می‌رساند؛ جایی که سرویس واقعی (مثلاً 3x-ui) گوش می‌کند.
+            مقصد همیشه IP داخلی طرف مقابل است و هرگز IP عمومی دیگری نیست. این فوروارد فقط TCP است؛ UDP در نسخهٔ ۱ پشتیبانی نمی‌شود.
+            توجه: پورت ورودی روی اینترنت عمومی باز می‌شود و تنها محافظ آن، احراز هویت سرویس مقصد است (مثلاً UUID در 3x-ui)؛ پس پورت ورودی را با پورت‌های تونل (5001 و 8090) اشتباه نگیر.
+          </p>
+          {!isTun && <p className="hint" style={{ color: "var(--accent-amber)" }}>فوروارد فقط برای تونل‌های TUN فعال است؛ موتور قدیمی مسیر listen/forward خودش را دارد.</p>}
+          {isTun && (
+            <>
+              <div className="grid-2">
+                <Field label="نام (اختیاری)">
+                  <input className="input" value={newFwdName} onChange={(e) => setNewFwdName(e.target.value)} maxLength={100} placeholder="مثلاً vless-خارج" />
+                </Field>
+                <Field label="پورت ورودی روی همین سرور (کلاینت به این پورت می‌زند)">
+                  <input className="input mono" dir="ltr" type="number" min={1} max={65535} value={newListen} onChange={(e) => setNewListen(Number(e.target.value))} />
+                </Field>
+                <Field label="پورت مقصد روی سرور مقابل (پورت Inbound در 3x-ui)">
+                  <input className="input mono" dir="ltr" type="number" min={1} max={65535} value={newTarget} onChange={(e) => setNewTarget(Number(e.target.value))} />
+                </Field>
+                <div className="field"><span>&nbsp;</span><button className="btn btn-primary" onClick={() => void addForward()}>+ ساخت فوروارد</button></div>
+              </div>
+              <div className="stack" style={{ marginTop: 16 }}>
+                {forwards.length === 0 && <p className="muted">هنوز فورواردی ثبت نشده است.</p>}
+                {forwards.map((f) => (
+                  <div key={f.rule.id} className="panel inner">
+                    <div className="section-head">
+                      <h3 dir="ltr">{f.rule.name} — {f.rule.listen_port} → {f.target}</h3>
+                      <span className={`pill ${f.listening ? "ok" : "muted"}`}>{f.listening ? "در حال گوش دادن" : "متوقف"}</span>
+                    </div>
+                    <p className="hint" dir="ltr">
+                      client → this server:{f.rule.listen_port} → tunnel → {f.target} · connections: {f.stats?.connections ?? 0} · ↑ {f.stats?.bytes_up ?? 0} B · ↓ {f.stats?.bytes_down ?? 0} B
+                    </p>
+                    {f.stats?.last_error && <p className="hint" style={{ color: "var(--accent-amber)" }}>{f.stats.last_error}</p>}
+                    <button className="btn btn-ghost btn-sm danger-text" onClick={() => void removeForward(f.rule.id)}>حذف فوروارد</button>
+                  </div>
+                ))}
+              </div>
+              <p className="hint">فوروارد با شروع تونل بالا می‌آید و با توقف تونل (یا از کار افتادن آن) متوقف می‌شود. اگر تونل در حال اجراست، فوروارد جدید بلافاصله گوش می‌کند و نیازی به ری‌استارت تونل نیست.</p>
+            </>
+          )}
         </section>
       )}
 

@@ -106,6 +106,11 @@ func (s *Server) setupRoutes() {
 			protected.GET("/instances/:id/spoof-ips", s.handleGetInstanceSpoofIPs)
 			protected.PUT("/instances/:id/spoof-ips", s.handleSetInstanceSpoofIPs)
 
+			// Reverse-tunnel forward rules (entry -> peer TUN service)
+			protected.GET("/instances/:id/forwards", s.handleListForwards)
+			protected.POST("/instances/:id/forwards", s.handleCreateForward)
+			protected.DELETE("/instances/:id/forwards/:ruleID", s.handleDeleteForward)
+
 			// Tester
 			protected.POST("/tester/start", s.handleTesterStart)
 			protected.GET("/tester/status", s.handleTesterStatus)
