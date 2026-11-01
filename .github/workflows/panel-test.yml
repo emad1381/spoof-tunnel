@@ -1,224 +1,39 @@
-name: Panel CI
-
+name: Panel and L3 validation
 on:
   push:
-    branches: [dev, main]
-    paths:
-      - 'panel/**'
+    branches: [main, master, dev]
   pull_request:
-    branches: [dev, main]
-    paths:
-      - 'panel/**'
-
+  workflow_call:
+permissions:
+  contents: read
 jobs:
-  test-backend:
-    name: Backend (Go ${{ matrix.go-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: ['1.23']
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ matrix.go-version }}
-
-      - name: Download dependencies
-        working-directory: panel/backend
-        run: go mod download
-
-      - name: Create mock web directory
-        run: mkdir -p panel/backend/cmd/panel/web && touch panel/backend/cmd/panel/web/index.html
-
-      - name: Vet
-        working-directory: panel/backend
-        run: go vet ./...
-
-      - name: Build (smoke test)
-        working-directory: panel/backend
-        run: go build ./cmd/panel/
-
-  test-frontend:
-    name: Frontend (Node ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: ['20']
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-
-      - name: Install dependencies
-        working-directory: panel/frontend
-        run: npm ci
-
-      - name: Lint
-        working-directory: panel/frontend
-        run: npm run lint || true
-
-      - name: Build
-        working-directory: panel/frontend
-        run: npm run build
-
-      - name: Check output
-        run: |
-          if [ ! -f panel/frontend/out/index.html ]; then
-            echo "Build failed: index.html not found"
-            exit 1
-          fi
-          echo "Frontend build size:"
-          du -sh panel/frontend/out/
-
-  integration:
-    name: Integration Test
-    needs: [test-backend, test-frontend]
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Build frontend
-        working-directory: panel/frontend
-        run: |
-          npm ci
-          npm run build
-
-      - name: Copy frontend → backend embed
-        run: |
-          rm -rf panel/backend/cmd/panel/web
-          cp -r panel/frontend/out panel/backend/cmd/panel/web
-
-      - name: Build panel binary
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: panel/frontend/package-lock.json
+      - run: go test -race ./internal/l3 ./internal/tester
+      - run: go test -race ./internal/...
         working-directory: panel/backend
-        run: go build -o /tmp/spoof-panel ./cmd/panel/
-
-      - name: Test setup mode
-        id: setup
-        run: |
-          SETUP_OUT=$(SPOOF_DATA_DIR=/tmp/panel-test /tmp/spoof-panel \
-            -setup-user testadmin \
-            -setup-pass testpass123 \
-            -setup-port 18888)
-          echo "$SETUP_OUT"
-          WEB_PATH=$(echo "$SETUP_OUT" | grep -oP 'Web Path:\s+\K/\S+')
-          echo "web_path=$WEB_PATH" >> $GITHUB_OUTPUT
-          echo "Detected web path: $WEB_PATH"
-
-      - name: Start panel and test APIs
-        run: |
-          WP="${{ steps.setup.outputs.web_path }}"
-          BASE="http://localhost:18888${WP}"
-          echo "API base: ${BASE}/api"
-
-          SPOOF_DATA_DIR=/tmp/panel-test /tmp/spoof-panel -port 18888 &
-          PANEL_PID=$!
-          sleep 3
-
-          # Root redirect
-          ROOT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:18888/)
-          echo "Root redirect: $ROOT_STATUS"
-          [ "$ROOT_STATUS" = "302" ] || exit 1
-
-          # Health check
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${BASE}/api/auth/check)
-          echo "Auth check: $STATUS"
-          [ "$STATUS" = "200" ] || exit 1
-
-          # Login
-          RESP=$(curl -s -X POST ${BASE}/api/auth/login \
-            -H "Content-Type: application/json" \
-            -d '{"username":"testadmin","password":"testpass123"}')
-          echo "Login response: $RESP"
-          TOKEN=$(echo "$RESP" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
-          [ -n "$TOKEN" ] || exit 1
-          echo "Got token: ${TOKEN:0:20}..."
-
-          # Dashboard
-          DASH=$(curl -s ${BASE}/api/dashboard \
-            -H "Authorization: Bearer $TOKEN")
-          echo "Dashboard: $DASH"
-          echo "$DASH" | grep -q "total" || exit 1
-
-          # System info
-          SYS=$(curl -s ${BASE}/api/system \
-            -H "Authorization: Bearer $TOKEN")
-          echo "System: $SYS"
-          echo "$SYS" | grep -q "hostname" || exit 1
-
-          # Create tunnel instance
-          echo "--- Create instance ---"
-          INST=$(curl -s -X POST ${BASE}/api/instances \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"name":"Test Tunnel","mode":"local","send_transport":"tcp","recv_transport":"udp","spoof_ip":"1.2.3.4","spoof_port":443}')
-          echo "$INST"
-          echo "$INST" | grep -q "Test Tunnel" || exit 1
-          INST_ID=$(echo "$INST" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
-          echo "Instance ID: $INST_ID"
-
-          # List instances
-          echo "--- List instances ---"
-          LIST=$(curl -s ${BASE}/api/instances \
-            -H "Authorization: Bearer $TOKEN")
-          echo "$LIST"
-          echo "$LIST" | grep -q "send_transport" || exit 1
-
-          # Get instance
-          echo "--- Get instance ---"
-          GET=$(curl -s ${BASE}/api/instances/$INST_ID \
-            -H "Authorization: Bearer $TOKEN")
-          echo "$GET"
-          echo "$GET" | grep -q "tcp" || exit 1
-
-          # Update instance
-          echo "--- Update instance ---"
-          UPD=$(curl -s -X PUT ${BASE}/api/instances/$INST_ID \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"name":"Updated Tunnel","mode":"remote","send_transport":"icmp","recv_transport":"udp"}')
-          echo "$UPD"
-          echo "$UPD" | grep -q "Updated Tunnel" || exit 1
-
-          # Set spoof IPs
-          echo "--- Set spoof IPs ---"
-          SIPS=$(curl -s -X PUT ${BASE}/api/instances/$INST_ID/spoof-ips \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"content":"1.2.3.4\n5.6.7.8"}')
-          echo "$SIPS"
-          echo "$SIPS" | grep -q '"ok":true' || exit 1
-
-          # Delete instance
-          echo "--- Delete instance ---"
-          DEL=$(curl -s -X DELETE ${BASE}/api/instances/$INST_ID \
-            -H "Authorization: Bearer $TOKEN")
-          echo "$DEL"
-          echo "$DEL" | grep -q '"ok":true' || exit 1
-
-          # Frontend serving (under web path)
-          HTML_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${BASE}/)
-          echo "Frontend: $HTML_STATUS"
-          [ "$HTML_STATUS" = "200" ] || exit 1
-
-          # Without web path should 404
-          BAD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:18888/dashboard/)
-          echo "Bad path: $BAD_STATUS"
-          [ "$BAD_STATUS" = "404" ] || exit 1
-
-          kill $PANEL_PID 2>/dev/null
-          echo "✓ All integration tests passed"
+      - run: bash scripts/build.sh
+      - run: npx playwright install --with-deps chromium
+        working-directory: panel/frontend
+      - run: npm run test:ui
+        working-directory: panel/frontend
+      - run: sudo env SPOOF_L3_BINARY="$PWD/dist/spoof-l3" python3 scripts/integration_l3.py
+      - run: sudo env SPOOF_L3_BINARY="$PWD/dist/spoof-l3" python3 scripts/integration_delay.py
+      - run: sudo python3 scripts/integration_multipeer.py
+      - run: python3 scripts/smoke_panel.py
+        env:
+          SPOOF_PANEL_BINARY: dist/spoof-panel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validated-linux-amd64
+          path: dist/spoof-tunnel-linux-amd64.tar.gz

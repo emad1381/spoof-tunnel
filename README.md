@@ -38,7 +38,7 @@ Copy the **entire dist directory** to each VPS:
 sudo bash dist/install.sh
 ```
 
-First install prints random administrator credentials and URL. Later installs preserve the database. The panel serves HTTP: use HTTPS reverse proxy or SSH forwarding for remote administration. The URL prefix does not replace authentication.
+First install prints random administrator credentials and URL once. Later installs preserve the database and password; only bcrypt hashes are stored. Use a CLI password reset if the password is lost. The panel serves HTTP: use HTTPS reverse proxy or SSH forwarding for remote administration. The URL prefix does not replace authentication.
 
 ## Connect
 
@@ -54,13 +54,13 @@ This creates a private link; it does not automatically publish a public applicat
 ## Verify
 
 ```sh
-go test -race ./internal/l3
+go test -race ./internal/l3 ./internal/tester
 (cd panel/backend && go test -race ./internal/...)
 go build -o spoof-l3 ./cmd/spoof-l3
 sudo python3 scripts/integration_l3.py
 ```
 
-Six carrier combinations passed isolated namespace tests: ping, 128 KiB exact TCP echo, UDP echo and authenticated heartbeats. This is not proof of provider-specific reachability or sustained production performance.
+All 25 ordered carrier combinations plus five rotating-source cases are exercised in isolated namespace tests: ping, 128 KiB exact TCP echo, UDP echo and authenticated heartbeats. This is not proof of provider-specific reachability or sustained production performance.
 
 ## Scope
 

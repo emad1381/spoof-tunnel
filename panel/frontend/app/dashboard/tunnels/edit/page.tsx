@@ -1,8 +1,8 @@
 "use client";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { getBasePath, useBasePath } from "@/lib/basepath";
+import { getBasePath } from "@/lib/basepath";
 import { useToast } from "@/lib/toast";
 import { IconPlay, IconStop, IconRestart, IconDownload } from "@/lib/icons";
 
@@ -51,45 +51,55 @@ function Field({
 
 function EditContent() {
   const params = useSearchParams();
-  const router = useRouter();
   const id = Number(params.get("id"));
-  const base = useBasePath();
-  const { toast } = useToast();
+    const { toast } = useToast();
 
   const [config, setConfig] = useState<Instance | null>(null);
   const [status, setStatus] = useState("stopped");
-  const [uptime, setUptime] = useState(0);
   const [statusError, setStatusError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [controlBusy, setControlBusy] = useState(false);
+ const requestId = useRef(0);
+ const fetching = useRef(false);
+ const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"config" | "ips" | "logs" | "forwards">("config");
-  const [forwards, setForwards] = useState<ForwardStatus[]>([]);
+  const forwardRequest = useRef(0);
+ const forwardFetching = useRef(false);
+ const [forwards, setForwards] = useState<ForwardStatus[]>([]);
   const [newListen, setNewListen] = useState(443);
   const [newTarget, setNewTarget] = useState(443);
   const [newFwdName, setNewFwdName] = useState("");
+ const [forwardBusy, setForwardBusy] = useState(false);
   const [spoofIPs, setSpoofIPs] = useState("");
   const [savedIPs, setSavedIPs] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [wsState, setWsState] = useState<"off" | "live" | "retry">("off");
   const logEnd = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async (full = true) => {
-    if (!id) return;
+  const load = useCallback(async (full = true, force = false) => {
+    if (!id || (fetching.current && !force)) return;
+    const ticket = ++requestId.current; fetching.current = true;
     try {
-      const data = await api.getInstance(id);
-      if (full) setConfig(data.instance);
-      setStatus(data.status);
-      setUptime(data.uptime);
-      setStatusError(data.error || "");
-    } catch {
-      router.replace(base + "/dashboard/tunnels");
-    }
-  }, [id, base, router]);
+      let data: { status: string; error?: string };
+      if (full) {
+        const snapshot = await api.getInstance(id);
+        if (ticket !== requestId.current) return;
+        setConfig(snapshot.instance); setSpoofIPs(snapshot.instance.spoof_ip_list || "");
+        data = snapshot;
+      } else {
+        data = await api.instanceStatus(id);
+        if (ticket !== requestId.current) return;
+      }
+      setStatus(data.status); setStatusError(data.error || "");
+    } catch (e) {
+      if (ticket === requestId.current) setError(e instanceof Error ? e.message : "دریافت وضعیت اتصال ناموفق بود.");
+    } finally { if (ticket === requestId.current) fetching.current = false; }
+  }, [id]);
 
   useEffect(() => {
     if (!id) {
-      router.replace(getBasePath() + "/dashboard/tunnels");
+      window.location.replace(getBasePath() + "/dashboard/tunnels/");
       return;
     }
     void load(true);
@@ -97,20 +107,18 @@ function EditContent() {
       if (document.visibilityState === "visible") void load(false);
     }, 3000);
     return () => clearInterval(t);
-  }, [id, load, router]);
+  }, [id, load]);
 
-  useEffect(() => {
-    if (!id) return;
-    api.getInstanceSpoofIPs(id).then((d) => setSpoofIPs(d.content || "")).catch(() => {});
-  }, [id]);
 
-  const loadForwards = useCallback(async () => {
-    if (!id) return;
+  const loadForwards = useCallback(async (force = false) => {
+    if (!id || (forwardFetching.current && !force)) return;
+    const ticket = ++forwardRequest.current; forwardFetching.current = true;
     try {
-      setForwards(await api.listForwards(id));
-    } catch {
-      setForwards([]);
-    }
+      const items = await api.listForwards(id);
+      if (ticket === forwardRequest.current) setForwards(items);
+    } catch (e) {
+      if (ticket === forwardRequest.current) setError(e instanceof Error ? e.message : "دریافت وضعیت فورواردها ناموفق بود.");
+    } finally { if (ticket === forwardRequest.current) forwardFetching.current = false; }
   }, [id]);
 
   useEffect(() => {
@@ -123,29 +131,32 @@ function EditContent() {
   }, [tab, loadForwards]);
 
   const addForward = async () => {
+    if (forwardBusy) return;
+ setForwardBusy(true); ++forwardRequest.current;
     setError("");
     try {
       await api.createForward(id, { name: newFwdName, protocol: "tcp", listen_port: newListen, target_port: newTarget, enabled: true });
-      toast.success("فوروارد ساخته شد و با تونل در حال اجرا، همین حالا گوش می‌کند.");
-      await loadForwards();
+      toast.success("فوروارد ذخیره شد؛ وضعیت گوش‌دادن در فهرست نمایش داده می‌شود.");
+      await loadForwards(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "ساخت فوروارد ناموفق بود";
       setError(msg);
       toast.error(msg);
-    }
+    } finally { setForwardBusy(false); }
   };
 
   const removeForward = async (ruleId: number) => {
+ if (forwardBusy) return; setForwardBusy(true); ++forwardRequest.current;
     setError("");
     try {
       await api.deleteForward(id, ruleId);
       toast.success("فوروارد حذف شد.");
-      await loadForwards();
+      await loadForwards(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "حذف فوروارد ناموفق بود";
       setError(msg);
       toast.error(msg);
-    }
+    } finally { setForwardBusy(false); }
   };
 
   // Live logs over WebSocket
@@ -158,8 +169,9 @@ function EditContent() {
     const connect = () => {
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
       const token = localStorage.getItem("token") || "";
-      const url = `${proto}//${window.location.host}${getBasePath()}/api/instances/${id}/logs?token=${encodeURIComponent(token)}`;
-      ws = new WebSocket(url);
+      if (!token) { window.location.replace(getBasePath() + "/login/"); return; }
+ const url = `${proto}//${window.location.host}${getBasePath()}/api/instances/${id}/logs`;
+      ws = new WebSocket(url, ["spoof-logs", token]);
       ws.onopen = () => setWsState("live");
       ws.onmessage = (ev) => setLogs((prev) => [...prev.slice(-800), String(ev.data)]);
       ws.onclose = () => {
@@ -178,7 +190,8 @@ function EditContent() {
   }, [tab, id]);
 
   useEffect(() => {
-    logEnd.current?.scrollIntoView({ behavior: "smooth" });
+    const viewer = logEnd.current?.parentElement;
+ if (viewer && viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight < 160) viewer.scrollTop = viewer.scrollHeight;
   }, [logs]);
 
   const set = (key: string, value: string | number | boolean) =>
@@ -190,7 +203,9 @@ function EditContent() {
     setError("");
     setNotice("");
     try {
-      await api.updateInstance(id, config);
+      const saved = await api.updateInstance(id, config);
+ setConfig(saved);
+ setSpoofIPs(saved.spoof_ip_list || "");
       toast.success("تنظیمات اتصال با موفقیت ذخیره شد.");
       setNotice("تنظیمات ذخیره شد. برای اعمال، تونل را دوباره راه‌اندازی کن.");
     } catch (e) {
@@ -203,9 +218,11 @@ function EditContent() {
   };
 
   const saveIPs = async () => {
+ if (saving) return; setSaving(true);
     setError("");
     try {
       const r = await api.setInstanceSpoofIPs(id, spoofIPs);
+ setConfig(current => current ? { ...current, spoof_ip_list: spoofIPs.trim(), updated_at: r.instance.updated_at } : current);
       setSavedIPs(true);
       toast.success(`${r.count} آدرس مبدأ جعلی با موفقیت ذخیره شد.`);
       setNotice(`${r.count} آدرس ذخیره شد. برای اعمال، تونل را دوباره راه‌اندازی کن.`);
@@ -214,10 +231,11 @@ function EditContent() {
       const msg = e instanceof Error ? e.message : "ذخیرهٔ فهرست ناموفق بود";
       setError(msg);
       toast.error(msg);
-    }
+    } finally { setSaving(false); }
   };
 
   const control = async (kind: "start" | "stop" | "restart") => {
+ if (controlBusy || saving) return; setControlBusy(true); ++requestId.current;
     setError("");
     try {
       if (kind === "start") {
@@ -230,12 +248,12 @@ function EditContent() {
         await api.instanceRestart(id);
         toast.success("اتصال مجدداً راه‌اندازی شد.");
       }
-      setTimeout(() => void load(false), 700);
+      await load(false, true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "عملیات ناموفق بود";
       setError(msg);
       toast.error(msg);
-    }
+    } finally { setControlBusy(false); }
   };
 
   const download = () => {
@@ -253,12 +271,12 @@ function EditContent() {
     toast.success("فایل تنظیمات اتصال دانلود شد.");
   };
 
-  if (!config) return <div className="page"><p className="muted">در حال دریافت تنظیمات…</p></div>;
+  if (!config) return <div className="page">{error ? <><div className="banner error" role="alert">{error}</div><button className="btn btn-primary" onClick={() => void load(true, true)}>تلاش دوباره</button><a href={getBasePath() + "/dashboard/tunnels/"}>بازگشت به اتصال‌ها</a></> : <p className="muted">در حال دریافت تنظیمات…</p>}</div>;
 
   const isTun = config.engine === "tun";
   const isLocal = config.mode === "local";
   const running = status === "running";
-  const locked = running || status === "stopping";
+  const locked = running || status === "starting" || status === "stopping" || controlBusy;
 
   return (
     <div className="page">
@@ -274,22 +292,22 @@ function EditContent() {
           </p>
         </div>
         <div className="row">
-          <button className="btn btn-ghost" onClick={() => router.push(getBasePath() + "/dashboard/tunnels")}>
+          <button className="btn btn-ghost" onClick={() => window.location.assign(getBasePath() + "/dashboard/tunnels/")}>
             ← بازگشت به اتصال‌ها
           </button>
           {running ? (
             <>
-              <button className="btn btn-ghost" onClick={() => control("stop")}>
+              <button className="btn btn-ghost" disabled={controlBusy || saving} onClick={() => control("stop")}>
                 <IconStop size={12} />
                 <span>توقف</span>
               </button>
-              <button className="btn btn-ghost" onClick={() => control("restart")}>
+              <button className="btn btn-ghost" disabled={controlBusy || saving} onClick={() => control("restart")}>
                 <IconRestart size={12} />
                 <span>راه‌اندازی مجدد</span>
               </button>
             </>
           ) : (
-            <button className="btn btn-primary" onClick={() => control("start")}>
+            <button className="btn btn-primary" disabled={controlBusy || saving} onClick={() => control("start")}>
               <IconPlay size={12} />
               <span>راه‌اندازی اتصال</span>
             </button>
@@ -323,11 +341,11 @@ function EditContent() {
               <h2>هویت و راه‌اندازی</h2>
               <div className="stack">
                 <Field label="نام اتصال">
-                  <input className="input" value={String(config.name ?? "")} disabled={locked} onChange={(e) => set("name", e.target.value)} maxLength={100} />
+                  <input className="input" value={String(config.name ?? "")} disabled={locked || saving} onChange={(e) => set("name", e.target.value)} maxLength={100} />
                 </Field>
                 <Field label="شروع خودکار">
                   <label className="switch-row">
-                    <input type="checkbox" checked={!!config.enabled} disabled={locked} onChange={(e) => set("enabled", e.target.checked)} />
+                    <input type="checkbox" checked={!!config.enabled} disabled={locked || saving} onChange={(e) => set("enabled", e.target.checked)} />
                     <span>اجرای خودکار هنگام بوت شدن پنل</span>
                   </label>
                 </Field>
@@ -341,12 +359,12 @@ function EditContent() {
               <h2>پروتکل‌های حامل و پورت‌ها</h2>
               <div className="stack">
                 <Field label="حامل ارسال (Upload Carrier)">
-                  <select className="input" value={String(config.send_transport ?? "icmp")} disabled={locked} onChange={(e) => set("send_transport", e.target.value)}>
+                  <select className="input" value={String(config.send_transport ?? "icmp")} disabled={locked || saving} onChange={(e) => set("send_transport", e.target.value)}>
                     {CARRIERS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
                 </Field>
                 <Field label="حامل دریافت (Download Carrier)" hint="باید با حامل ارسال طرف مقابل هم‌خوان باشد.">
-                  <select className="input" value={String(config.recv_transport ?? "icmp")} disabled={locked} onChange={(e) => set("recv_transport", e.target.value)}>
+                  <select className="input" value={String(config.recv_transport ?? "icmp")} disabled={locked || saving} onChange={(e) => set("recv_transport", e.target.value)}>
                     {CARRIERS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
                 </Field>
@@ -354,13 +372,13 @@ function EditContent() {
                   <Field label={isLocal ? "پورت دریافت خارج" : "پورت دریافت این سرور"}>
                     <input className="input mono" dir="ltr" type="number" min={1} max={65535}
                       value={Number(isLocal ? config.remote_port : config.listen_port) || ""}
-                      disabled={locked}
+                      disabled={locked || saving}
                       onChange={(e) => set(isLocal ? "remote_port" : "listen_port", Number(e.target.value))} />
                   </Field>
                   <Field label={isLocal ? "پورت دریافت ایران" : "پورت دریافت طرف مقابل"}>
                     <input className="input mono" dir="ltr" type="number" min={1} max={65535}
                       value={Number(isLocal ? config.recv_port : config.client_port) || ""}
-                      disabled={locked}
+                      disabled={locked || saving}
                       onChange={(e) => set(isLocal ? "recv_port" : "client_port", Number(e.target.value))} />
                   </Field>
                 </div>
@@ -371,12 +389,12 @@ function EditContent() {
               <h2>آدرس‌های واقعی دو سرور</h2>
               <div className="stack">
                 <Field label="IP واقعی سرور محلی" hint="مقصد بسته‌ها و بایند سوکت خام.">
-                  <input className="input mono" dir="ltr" value={String(config.local_ip ?? "")} disabled={locked} onChange={(e) => set("local_ip", e.target.value)} />
+                  <input className="input mono" dir="ltr" value={String(config.local_ip ?? "")} disabled={locked || saving} onChange={(e) => set("local_ip", e.target.value)} />
                 </Field>
                 <Field label="IP واقعی طرف مقابل">
                   <input className="input mono" dir="ltr"
                     value={String((isLocal ? config.remote_addr : config.client_ip) ?? "")}
-                    disabled={locked}
+                    disabled={locked || saving}
                     onChange={(e) => set(isLocal ? "remote_addr" : "client_ip", e.target.value)} />
                 </Field>
               </div>
@@ -386,10 +404,13 @@ function EditContent() {
               <h2>آدرس‌های مبدأ جعلی (Spoof)</h2>
               <div className="stack">
                 <Field label="مبدأ جعلی این سمت" hint="برای گردش بین چند IP از تب «استخر IPهای اسپوف» استفاده کن.">
-                  <input className="input mono" dir="ltr" value={String(config.spoof_ip ?? "")} disabled={locked} onChange={(e) => set("spoof_ip", e.target.value)} />
+                  <input className="input mono" dir="ltr" value={String(config.spoof_ip ?? "")} disabled={locked || saving} onChange={(e) => set("spoof_ip", e.target.value)} />
                 </Field>
                 <Field label="مبدأ جعلی مورد انتظار طرف مقابل">
-                  <input className="input mono" dir="ltr" value={String(config.peer_spoof_ip ?? "")} disabled={locked} onChange={(e) => set("peer_spoof_ip", e.target.value)} />
+                  <input className="input mono" dir="ltr" value={String(config.peer_spoof_ip ?? "")} disabled={locked || saving} onChange={(e) => set("peer_spoof_ip", e.target.value)} />
+                </Field>
+                <Field label="فهرست مبدأهای مجاز طرف مقابل" hint="اگر طرف مقابل استخر چند IP دارد، همان آدرس‌ها را اینجا وارد کن؛ هر خط یک IPv4. با خالی‌بودن فهرست فقط مبدأ تکی بالا پذیرفته می‌شود.">
+                  <textarea className="input mono" dir="ltr" rows={4} value={String(config.peer_spoof_ip_list ?? "")} disabled={locked || saving} onChange={(e) => set("peer_spoof_ip_list", e.target.value)} />
                 </Field>
               </div>
             </section>
@@ -399,20 +420,20 @@ function EditContent() {
                 <h2>پیکربندی رابط TUN مجازی</h2>
                 <div className="stack">
                   <Field label="نام رابط سیستم (Network Interface)" hint="۱ تا ۱۵ کاراکتر (مثلاً sptest0).">
-                    <input className="input mono" dir="ltr" value={String(config.tun_interface ?? "")} disabled={locked} onChange={(e) => set("tun_interface", e.target.value)} />
+                    <input className="input mono" dir="ltr" value={String(config.tun_interface ?? "")} disabled={locked || saving} onChange={(e) => set("tun_interface", e.target.value)} />
                   </Field>
                   <div className="grid-2 tight">
                     <Field label="IP داخلی این سمت">
-                      <input className="input mono" dir="ltr" value={String(config.tun_address ?? "")} disabled={locked} onChange={(e) => set("tun_address", e.target.value)} />
+                      <input className="input mono" dir="ltr" value={String(config.tun_address ?? "")} disabled={locked || saving} onChange={(e) => set("tun_address", e.target.value)} />
                     </Field>
                     <Field label="IP داخلی طرف مقابل">
-                      <input className="input mono" dir="ltr" value={String(config.tun_peer ?? "")} disabled={locked} onChange={(e) => set("tun_peer", e.target.value)} />
+                      <input className="input mono" dir="ltr" value={String(config.tun_peer ?? "")} disabled={locked || saving} onChange={(e) => set("tun_peer", e.target.value)} />
                     </Field>
                   </div>
                   <Field label="MTU رابط TUN" hint="محدوده ۵۷۶ تا ۱۳۰۰ بایت (پیشنهادی: ۱۲۸۰).">
                     <input className="input mono" dir="ltr" type="number" min={576} max={1300}
                       value={Number(config.tun_mtu) || ""}
-                      disabled={locked}
+                      disabled={locked || saving}
                       onChange={(e) => set("tun_mtu", Number(e.target.value))} />
                   </Field>
                 </div>
@@ -441,7 +462,7 @@ function EditContent() {
                 تعداد: {spoofIPs.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).length} آدرس فعال
               </span>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={saveIPs} disabled={running}>
+            <button className="btn btn-primary btn-sm" onClick={saveIPs} disabled={locked || saving}>
               {savedIPs ? "ذخیره شد ✓" : "ذخیرهٔ استخر IP"}
             </button>
           </div>
@@ -454,7 +475,7 @@ function EditContent() {
             dir="ltr"
             rows={14}
             value={spoofIPs}
-            disabled={running}
+            disabled={locked || saving}
             onChange={(e) => setSpoofIPs(e.target.value)}
             placeholder={"198.51.100.10\n203.0.113.5\n203.0.113.6"}
             spellCheck={false}
@@ -470,7 +491,7 @@ function EditContent() {
               <h2>فوروارد معکوس: ورودی کلاینت روی همین سرور</h2>
               <span className="hint">فقط برای تونل TUN</span>
             </div>
-            <button className="btn btn-ghost btn-sm" onClick={() => void loadForwards()}>به‌روزرسانی</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => void loadForwards(true)}>به‌روزرسانی</button>
           </div>
           <p className="page-intro">
             کلاینت (گوشی/لپتاپ) به IP عمومی همین سرور روی «پورت ورودی» وصل می‌شود و پنل، اتصال را از داخل تونل به IP داخلی طرف مقابل روی «پورت مقصد» می‌رساند؛ جایی که سرویس واقعی (مثلاً 3x-ui) گوش می‌کند.
@@ -490,7 +511,7 @@ function EditContent() {
                 <Field label="پورت مقصد روی سرور مقابل (پورت Inbound در 3x-ui)">
                   <input className="input mono" dir="ltr" type="number" min={1} max={65535} value={newTarget} onChange={(e) => setNewTarget(Number(e.target.value))} />
                 </Field>
-                <div className="field"><span>&nbsp;</span><button className="btn btn-primary" onClick={() => void addForward()}>+ ساخت فوروارد</button></div>
+                <div className="field"><span>&nbsp;</span><button className="btn btn-primary" disabled={forwardBusy} onClick={() => void addForward()}>+ ساخت فوروارد</button></div>
               </div>
               <div className="stack" style={{ marginTop: 16 }}>
                 {forwards.length === 0 && <p className="muted">هنوز فورواردی ثبت نشده است.</p>}
@@ -504,7 +525,7 @@ function EditContent() {
                       client → this server:{f.rule.listen_port} → tunnel → {f.target} · connections: {f.stats?.connections ?? 0} · ↑ {f.stats?.bytes_up ?? 0} B · ↓ {f.stats?.bytes_down ?? 0} B
                     </p>
                     {f.stats?.last_error && <p className="hint" style={{ color: "var(--accent-amber)" }}>{f.stats.last_error}</p>}
-                    <button className="btn btn-ghost btn-sm danger-text" onClick={() => void removeForward(f.rule.id)}>حذف فوروارد</button>
+                    <button className="btn btn-ghost btn-sm danger-text" disabled={forwardBusy} onClick={() => void removeForward(f.rule.id)}>حذف فوروارد</button>
                   </div>
                 ))}
               </div>
@@ -519,7 +540,7 @@ function EditContent() {
           <div className="section-head">
             <div>
               <h2>لاگ زندهٔ پروسهٔ تانل</h2>
-              <span className="hint">جریان لاگ‌های زندهٔ سوکت خام، هندشیک‌ها و خطاهای هسته.</span>
+              <span className="hint">جریان رویدادهای سوکت خام، پاسخ‌های احرازشده و خطاهای هسته.</span>
             </div>
             <div className="row">
               <span className={`pill ${wsState === "live" ? "ok" : wsState === "retry" ? "warn" : "muted"}`}>

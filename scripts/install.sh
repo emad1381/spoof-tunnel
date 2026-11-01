@@ -22,6 +22,10 @@ if [[ -f "$src/SHA256SUMS" ]]; then
   fi
 fi
 
+# Reject incompatible/corrupted executables before stopping an existing service.
+"$src/spoof-panel" --version >/dev/null
+"$src/spoof-l3" --version >/dev/null
+
 install -d -m 700 /etc/spoof-panel
 install -d -m 755 /opt/spoof-panel
 
@@ -37,7 +41,7 @@ systemctl stop spoof-panel.service 2>/dev/null || true
 install -m 755 "$src/spoof-l3" /etc/spoof-panel/spoof-l3
 install -m 755 "$src/spoof-panel" /opt/spoof-panel/spoof-panel
 
-# Display or initialize credentials (always prints login details)
+# Initialize credentials on first install; upgrades preserve the password.
 /opt/spoof-panel/spoof-panel --setup
 
 cat > /etc/systemd/system/spoof-panel.service <<'UNIT'
@@ -57,8 +61,8 @@ TimeoutStopSec=30
 UMask=0077
 LimitNOFILE=65536
 NoNewPrivileges=true
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ReadWritePaths=/etc/spoof-panel
 ProtectHome=true
@@ -70,17 +74,17 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable spoof-panel.service >/dev/null 2>&1 || true
-systemctl restart spoof-panel.service >/dev/null 2>&1 || true
+systemctl enable spoof-panel.service >/dev/null
+systemctl restart spoof-panel.service
 sleep 1
 
 if systemctl is-active --quiet spoof-panel.service; then
   state='running'
 else
-  state='not running — inspect: journalctl -u spoof-panel -n 50 --no-pager'
+  echo 'Service failed — inspect: journalctl -u spoof-panel -n 50 --no-pager' >&2
+  exit 1
 fi
 
-server_ip=$(curl -s4 --max-time 3 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
 
 panel_version=$(/opt/spoof-panel/spoof-panel --version 2>/dev/null || echo "unknown")
 

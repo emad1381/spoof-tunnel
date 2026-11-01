@@ -27,6 +27,12 @@ func targetAddr(inst db.TunnelInstance, rule db.ForwardRule) string {
 // the tunnel itself is still usable, and the user can fix the port and
 // restart the tunnel.
 func (m *Manager) StartForwarders(id uint) {
+	ins := m.getInstance(id)
+	ins.mu.Lock()
+	defer ins.mu.Unlock()
+	if ins.status != StatusRunning || ins.cmd == nil {
+		return
+	}
 	var inst db.TunnelInstance
 	if err := m.db.First(&inst, id).Error; err != nil {
 		return
@@ -39,7 +45,7 @@ func (m *Manager) StartForwarders(id uint) {
 		return
 	}
 	for _, rule := range rules {
-		if err := m.StartForwarder(inst, rule); err != nil {
+		if err := startForwarder(ins, inst, rule); err != nil {
 			log.Printf("[manager] forward rule %d failed to start: %v", rule.ID, err)
 		}
 	}
@@ -51,6 +57,15 @@ func (m *Manager) StartForwarders(id uint) {
 // failing spuriously on the first one's port.
 func (m *Manager) StartForwarder(inst db.TunnelInstance, rule db.ForwardRule) error {
 	ins := m.getInstance(inst.ID)
+	ins.mu.Lock()
+	defer ins.mu.Unlock()
+	if ins.status != StatusRunning || ins.cmd == nil {
+		return fmt.Errorf("tunnel is not running")
+	}
+	return startForwarder(ins, inst, rule)
+}
+
+func startForwarder(ins *Instance, inst db.TunnelInstance, rule db.ForwardRule) error {
 	ins.fwdMu.Lock()
 	defer ins.fwdMu.Unlock()
 	if old, ok := ins.forwarders[rule.ID]; ok {
@@ -81,6 +96,12 @@ func (m *Manager) StopForwarder(id, ruleID uint) {
 // StopForwarders stops every forwarder of an instance.
 func (m *Manager) StopForwarders(id uint) {
 	ins := m.getInstance(id)
+	ins.mu.Lock()
+	defer ins.mu.Unlock()
+	stopForwarders(ins)
+}
+
+func stopForwarders(ins *Instance) {
 	ins.fwdMu.Lock()
 	fwds := make([]*forward.Forwarder, 0, len(ins.forwarders))
 	for _, f := range ins.forwarders {

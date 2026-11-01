@@ -9,6 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/netip"
+	"strings"
+	"unicode/utf8"
 )
 
 type pairRequest struct {
@@ -30,6 +32,13 @@ type pairRequest struct {
 }
 
 func buildPair(p pairRequest) (db.TunnelInstance, db.TunnelInstance, error) {
+	p.Name = strings.TrimSpace(p.Name)
+	if utf8.RuneCountInString(p.Name) < 1 || utf8.RuneCountInString(p.Name) > 90 {
+		return db.TunnelInstance{}, db.TunnelInstance{}, fmt.Errorf("pair name must contain 1–90 characters")
+	}
+	if p.Engine != "" && p.Engine != "tun" && p.Engine != "udp-relay" {
+		return db.TunnelInstance{}, db.TunnelInstance{}, fmt.Errorf("unknown engine")
+	}
 	local := db.TunnelInstance{Name: p.Name + " · local", Mode: "local", ListenAddr: p.Listen, RemoteAddr: p.RemoteIP, RemotePort: p.RemotePort, RecvPort: p.LocalPort, SpoofIP: p.LocalSpoof, SpoofPort: 443, PeerSpoofIP: p.RemoteSpoof, SendTransport: p.Upload, RecvTransport: p.Download}
 	remote := db.TunnelInstance{Name: p.Name + " · remote", Mode: "remote", ListenPort: p.RemotePort, ForwardAddr: p.Forward, ClientIP: p.LocalIP, ClientPort: p.LocalPort, SpoofIP: p.RemoteSpoof, SpoofPort: 443, PeerSpoofIP: p.LocalSpoof, SendTransport: p.Download, RecvTransport: p.Upload}
 	if p.Engine == "tun" {
@@ -73,6 +82,8 @@ func buildPair(p pairRequest) (db.TunnelInstance, db.TunnelInstance, error) {
 
 // Generates both complementary ends; saves only the end on this host.
 func (s *Server) handlePair(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	var req pairRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -95,8 +106,8 @@ func (s *Server) handlePair(c *gin.Context) {
 		return
 	}
 	if selected != nil {
-		if err := s.db.Create(selected).Error; err != nil {
-			c.JSON(500, gin.H{"error": "save failed"})
+		if err := db.SaveTunnel(s.db, selected, true); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
 	}

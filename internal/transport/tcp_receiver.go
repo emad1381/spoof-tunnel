@@ -21,8 +21,9 @@ type TCPReceiver struct {
 	handle C.SpoofHandle
 	closed atomic.Bool
 
-	pktCh  chan receivedPacket
-	doneCh chan struct{}
+	pktCh    chan receivedPacket
+	doneCh   chan struct{}
+	readDone chan struct{}
 }
 
 // NewTCPReceiver creates a raw socket listener backed by Rust.
@@ -45,9 +46,10 @@ func NewTCPReceiver(cfg ReceiverConfig) (*TCPReceiver, error) {
 	}
 
 	r := &TCPReceiver{
-		handle: h,
-		pktCh:  make(chan receivedPacket, 4096),
-		doneCh: make(chan struct{}),
+		handle:   h,
+		pktCh:    make(chan receivedPacket, 4096),
+		doneCh:   make(chan struct{}),
+		readDone: make(chan struct{}),
 	}
 	go r.readLoop()
 	return r, nil
@@ -55,6 +57,9 @@ func NewTCPReceiver(cfg ReceiverConfig) (*TCPReceiver, error) {
 
 // readLoop calls Rust's blocking recv in a loop, delivering packets to pktCh.
 func (r *TCPReceiver) readLoop() {
+	defer close(r.readDone)
+	defer close(r.pktCh)
+	defer C.spoof_tcp_receiver_close(r.handle)
 	buf := make([]byte, 65536)
 	var srcIPBuf [4]byte
 	var srcPort C.uint16_t
@@ -116,11 +121,9 @@ func (r *TCPReceiver) Receive() ([]byte, net.IP, uint16, error) {
 
 // Close closes the Rust handle and stops the read goroutine.
 func (r *TCPReceiver) Close() error {
-	if r.closed.Swap(true) {
-		return nil
+	if !r.closed.Swap(true) {
+		close(r.doneCh)
 	}
-	close(r.doneCh)
-	C.spoof_tcp_receiver_close(r.handle)
-	close(r.pktCh)
+	<-r.readDone
 	return nil
 }

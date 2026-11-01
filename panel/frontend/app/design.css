@@ -165,7 +165,7 @@ button, input, select, textarea { font: inherit; }
 /* ── Layout ── */
 .app-layout { display: flex; flex-direction: column; min-height: 100vh; }
 .top-bar {
-  position: sticky; top: 0; z-index: 40;
+  position: sticky; top: 0; z-index: 45;
   background: color-mix(in srgb, var(--bg-2) 88%, transparent);
   /* 16px blur repainted the sticky bar on every scroll/reflow frame.
      8px keeps the glass look at roughly half the compositing cost. */
@@ -461,7 +461,10 @@ select.input { appearance: none; cursor: pointer; }
 .host-info dt { color: var(--text-muted); }
 .sticky-actions { position: sticky; bottom: 0; background: var(--card); padding: 12px 0; display: flex; gap: 10px; flex-wrap: wrap; }
 .tight { gap: 8px; }
-.v, .k { display: none; }
+.conn-grid > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.k { display: block; color: var(--text-muted); font-size: 12px; }
+.v { display: block; overflow-wrap: anywhere; font-size: 13px; }
+.drawer-close { display: none; }
 
 /* ── Responsive ── */
 @media (max-width: 1024px) {
@@ -471,6 +474,7 @@ select.input { appearance: none; cursor: pointer; }
 }
 @media (max-width: 768px) {
   .hamburger-btn { display: block; }
+ .drawer-close { display: inline-flex; align-self: flex-start; }
   .grid-2, .field-grid { grid-template-columns: 1fr; }
   .stats { grid-template-columns: 1fr; }
   .top-bar { padding: 10px 16px; }
@@ -478,7 +482,7 @@ select.input { appearance: none; cursor: pointer; }
   .hide-mobile { display: none !important; }
   .sidebar {
     position: fixed; top: 0; bottom: 0; inset-inline-start: 0; width: 280px !important;
-    transform: translateX(100%); z-index: 40; box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5); padding-top: 60px;
+    transform: translateX(100%); z-index: 40; box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5); padding-top: 105px;
   }
   :root[dir="ltr"] .sidebar { transform: translateX(-100%); }
   .sidebar.mobile-open { transform: translateX(0); }
@@ -507,4 +511,8 @@ select.input { appearance: none; cursor: pointer; }
   .sidebar { width: var(--sidebar-collapsed); }
   .sidebar .nav-label { display: none; }
   .main-content { padding: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+ *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

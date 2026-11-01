@@ -46,7 +46,9 @@ impl TcpReceiver {
     /// Blocking receive. Loops internally on transient errors.
     /// Copies payload into out_buf, returns metadata.
     pub fn recv(&mut self, out_buf: &mut [u8]) -> Result<RecvResult, String> {
+        let started = std::time::Instant::now();
         loop {
+            if started.elapsed() >= std::time::Duration::from_secs(1) { return Err("receive timeout".into()); }
             if self.closed.load(Ordering::Relaxed) {
                 return Err("closed".into());
             }
@@ -101,6 +103,7 @@ impl TcpReceiver {
         if n < 20 { return None; }
 
         let ihl = ((buf[0] & 0x0F) as usize) * 4;
+        if buf[0] >> 4 != 4 || ihl < 20 { return None; }
         if n < ihl + 20 { return None; }
         if buf[9] != libc::IPPROTO_TCP as u8 { return None; }
 
@@ -118,6 +121,7 @@ impl TcpReceiver {
 
         // Data offset
         let data_offset = ((tcp[12] >> 4) as usize) * 4;
+        if data_offset < 20 { return None; }
         let payload_start = ihl + data_offset;
         if payload_start > n { return None; }
 

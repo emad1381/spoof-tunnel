@@ -1,4 +1,4 @@
-.PHONY: all core panel frontend backend clean test rust xdp-ebpf xdp-loader
+.PHONY: all core l3 panel frontend backend clean test legacy-test rust xdp-ebpf xdp-loader
 
 # ── Build All ──
 all: l3 panel
@@ -45,10 +45,14 @@ dev-backend:
 	cd panel/backend && CGO_ENABLED=0 go build -o ../../spoof-panel ./cmd/panel/
 
 # ── Test ──
-test: rust xdp-ebpf
-	cd rust && cargo test
-	CGO_ENABLED=1 go test ./internal/...
-	cd panel/backend && go vet ./...
+test:
+	go test -race ./internal/l3 ./internal/tester
+	cd panel/backend && go test -race ./internal/... && go vet ./internal/...
+	cd panel/frontend && npm run lint && npm run typecheck
+
+legacy-test: rust
+	cd rust && cargo test -p spoof-transport
+	go test -race ./cmd/... ./internal/...
 
 # ── Clean ──
 clean:

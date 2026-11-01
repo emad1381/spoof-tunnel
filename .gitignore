@@ -103,3 +103,6 @@ rust/xdp-loader/target/
 /test-data/
 
 __pycache__/
+
+panel/frontend/test-results/
+panel/frontend/playwright-report/

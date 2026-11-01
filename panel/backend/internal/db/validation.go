@@ -2,16 +2,20 @@ package db
 
 import (
 	"fmt"
+	"gorm.io/gorm"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ParsaKSH/spoof-tunnel/internal/l3"
 )
 
 // Validate checks the actual IPv4 datagram relay contract before persisting it.
 func (c *TunnelInstance) Validate() error {
-	if len(strings.TrimSpace(c.Name)) == 0 || len(c.Name) > 100 {
+	c.Name = strings.TrimSpace(c.Name)
+	if utf8.RuneCountInString(c.Name) == 0 || utf8.RuneCountInString(c.Name) > 100 {
 		return fmt.Errorf("name must contain 1–100 characters")
 	}
 	if c.Engine == "tun" {
@@ -118,6 +122,7 @@ func (c TunnelInstance) L3Config() l3.Config {
 		SpoofSource:  c.SpoofIP,
 		SpoofSources: sources,
 		PeerSpoof:    c.PeerSpoofIP,
+		PeerSpoofs:   parseIPLines(c.PeerSpoofIPList),
 		Send:         c.SendTransport,
 		Receive:      c.RecvTransport,
 		SendPort:     sendPort,
@@ -128,4 +133,77 @@ func (c TunnelInstance) L3Config() l3.Config {
 		MTU:          c.TunMTU,
 		PSK:          c.PSK,
 	}
+}
+
+func parseIPLines(value string) []string {
+	var ips []string
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			ips = append(ips, line)
+		}
+	}
+	return ips
+}
+
+// SaveTunnel serializes validation against the current database contents. The
+// API also serializes mutations with start/stop so a validated stopped tunnel
+// cannot be started midway through an edit.
+func SaveTunnel(database *gorm.DB, c *TunnelInstance, create bool) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	return database.Transaction(func(tx *gorm.DB) error {
+		if c.RecvTransport == "tcp" {
+			port := c.RecvPort
+			if c.Mode == "remote" {
+				port = c.ListenPort
+			}
+			var count int64
+			if err := tx.Model(&ForwardRule{}).Where("listen_port = ? AND enabled = ?", port, true).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return fmt.Errorf("local TCP carrier port conflicts with an enabled forward rule")
+			}
+		}
+		if c.Engine == "tun" {
+			prefix, _ := netip.ParsePrefix(c.TunAddress)
+			prefix = prefix.Masked()
+			var all []TunnelInstance
+			if err := tx.Where("id <> ? AND engine = ?", c.ID, "tun").Find(&all).Error; err != nil {
+				return err
+			}
+			for _, other := range all {
+				if other.TunInterface == c.TunInterface {
+					return fmt.Errorf("interface %s is already used by %s", c.TunInterface, other.Name)
+				}
+				existing, err := netip.ParsePrefix(other.TunAddress)
+				if err != nil {
+					continue
+				}
+				existing = existing.Masked()
+				if prefix.Overlaps(existing) {
+					return fmt.Errorf("TUN subnet overlaps %s (%s)", other.Name, existing)
+				}
+				candidate, previous := c.L3Config(), other.L3Config()
+				for _, value := range []string{candidate.LocalIP, candidate.PeerIP} {
+					ip, err := netip.ParseAddr(value)
+					if err == nil && existing.Contains(ip) {
+						return fmt.Errorf("real endpoint is inside TUN subnet of %s", other.Name)
+					}
+				}
+				for _, value := range []string{previous.LocalIP, previous.PeerIP} {
+					ip, err := netip.ParseAddr(value)
+					if err == nil && prefix.Contains(ip) {
+						return fmt.Errorf("TUN subnet contains real endpoint of %s", other.Name)
+					}
+				}
+			}
+		}
+		if create {
+			return tx.Create(c).Error
+		}
+		return tx.Save(c).Error
+	})
 }

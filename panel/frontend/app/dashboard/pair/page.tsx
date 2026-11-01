@@ -4,26 +4,37 @@ import Link from "@/lib/link";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
 import { useToast } from "@/lib/toast";
-import { IconDownload, IconCopy, IconCheck, IconPair } from "@/lib/icons";
+import { IconDownload, IconCopy, IconCheck } from "@/lib/icons";
 
 type End = Record<string, string | number | boolean>;
 
 const CARRIERS = [
-  { value: "icmp", label: "ICMP Echo", desc: "پیشنهادی برای عبور پایدار" },
+  { value: "icmp", label: "ICMP Echo", desc: "نیازمند آزمون مسیر" },
   { value: "tcp", label: "TCP خام", desc: "بدون هندشیک، همراه با PSH/ACK" },
   { value: "udp", label: "UDP Datagram", desc: "مناسب سرویس‌های بی‌درنگ" },
   { value: "ipip", label: "پروتکل ۴ (IPIP)", desc: "فریم رمزشده داخل هدر IP" },
-  { value: "experimental", label: "پروتکل ۲۵۳", desc: "آزمایشی و ناشناخته برای DPI" },
+  { value: "experimental", label: "پروتکل ۲۵۳", desc: "آزمایشی؛ عبور وابسته به شبکه" },
 ];
 
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
 function suggestSubnet(used: string[]): string {
-  for (let c = 0; c < 250; c++) {
-    const base = `10.77.${c}.0/30`;
-    if (!used.includes(base)) return base;
+  const occupied = used.flatMap(value => {
+    const [address, prefix] = value.split("/"); const bits = Number(prefix);
+    if (!IPV4.test(address) || !Number.isInteger(bits) || bits < 0 || bits > 32) return [];
+    const number = address.split(".").reduce((sum, part) => sum * 256 + Number(part), 0);
+    const size = 2 ** (32 - bits), first = Math.floor(number / size) * size;
+    return [{ first, last: first + size - 1 }];
+  });
+  for (const second of [77, 88, 99]) {
+    for (let third = 0; third < 256; third++) {
+      for (let fourth = 0; fourth < 256; fourth += 4) {
+        const first = ((10 * 256 + second) * 256 + third) * 256 + fourth;
+        if (!occupied.some(range => first <= range.last && first + 3 >= range.first)) return `10.${second}.${third}.${fourth}/30`;
+      }
+    }
   }
-  return `10.88.${Math.floor(Math.random() * 250)}.0/30`;
+  return "";
 }
 
 function download(name: string, config: End) {
@@ -64,7 +75,7 @@ export default function PairPage() {
   useEffect(() => {
     api.listInstances()
       .then((list: Array<{ tun_address?: string }>) => {
-        const used = (list || []).map((i) => (i.tun_address || "").replace(/\.\d+\/30$/, ".0/30")).filter(Boolean);
+        const used = (list || []).map((i) => i.tun_address || "").filter(Boolean);
         setForm((f) => ({ ...f, tun_subnet: suggestSubnet(used) }));
       })
       .catch(() => {});
@@ -179,7 +190,7 @@ export default function PairPage() {
           <div className="grid-2">
             <label className="field">
               <span>نام اتصال</span>
-              <input className="input" maxLength={100} value={form.name} onChange={(e) => set("name", e.target.value)} required />
+              <input className="input" maxLength={90} value={form.name} onChange={(e) => set("name", e.target.value)} required />
             </label>
             <label className="field">
               <span>شبکهٔ داخلی TUN (/30)</span>
@@ -269,7 +280,7 @@ export default function PairPage() {
             <h3>امنیت و کلیدهای جهت‌دار</h3>
             <p className="hint">
               کلید PSK تولیدشده به صورت خودکار با برچسب‌های جهتی HMAC مشتق می‌شود
-              (local-to-remote و remote-to-local) تا حملهٔ بازتاب (Reflection Attack) کاملاً ناممکن شود.
+              (local-to-remote و remote-to-local) برای جلوگیری از پذیرش فریم بازتاب‌شده در جهت مخالف.
             </p>
           </div>
         </aside>

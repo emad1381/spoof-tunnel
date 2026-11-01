@@ -39,8 +39,6 @@ type Remote struct {
 	down     atomic.Uint64
 	upPkts   atomic.Uint64
 	downPkts atomic.Uint64
-
-	icmpSuppressed bool
 }
 
 func NewRemote(cfg RemoteConfig) (*Remote, error) {
@@ -51,13 +49,6 @@ func NewRemote(cfg RemoteConfig) (*Remote, error) {
 		cfg.RecvTransport = transport.TransportTCP
 	}
 
-	icmpSuppressed := false
-	if cfg.RecvTransport == transport.TransportICMP || cfg.RecvTransport == transport.TransportICMPv6 {
-		if suppressICMPEchoReply() {
-			icmpSuppressed = true
-		}
-	}
-
 	recver, err := transport.NewReceiver(cfg.RecvTransport, transport.ReceiverConfig{
 		ListenPort:   cfg.ListenPort,
 		PeerSpoofIP:  cfg.PeerSpoofIP,
@@ -66,27 +57,18 @@ func NewRemote(cfg RemoteConfig) (*Remote, error) {
 		XDPInterface: cfg.XDPInterface,
 	})
 	if err != nil {
-		if icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 		return nil, err
 	}
 
 	fwdAddr, err := net.ResolveUDPAddr("udp4", cfg.ForwardAddr)
 	if err != nil {
 		recver.Close()
-		if icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 		return nil, err
 	}
 
 	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		recver.Close()
-		if icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 		return nil, err
 	}
 
@@ -104,20 +86,16 @@ func NewRemote(cfg RemoteConfig) (*Remote, error) {
 	if err != nil {
 		recver.Close()
 		udpConn.Close()
-		if icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 		return nil, err
 	}
 
 	return &Remote{
-		cfg:            cfg,
-		done:           make(chan struct{}),
-		recver:         recver,
-		sender:         sender,
-		udpConn:        udpConn,
-		fwdAddr:        fwdAddr,
-		icmpSuppressed: icmpSuppressed,
+		cfg:     cfg,
+		done:    make(chan struct{}),
+		recver:  recver,
+		sender:  sender,
+		udpConn: udpConn,
+		fwdAddr: fwdAddr,
 	}, nil
 }
 
@@ -186,9 +164,6 @@ func (r *Remote) Close() {
 		r.recver.Close()
 		r.sender.Close()
 		r.udpConn.Close()
-		if r.icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 	})
 }
 

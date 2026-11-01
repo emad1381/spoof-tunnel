@@ -32,6 +32,7 @@ const (
 
 // Instance represents a single running tunnel process
 type Instance struct {
+	actionMu  sync.Mutex
 	ID        uint
 	cmd       *exec.Cmd
 	done      chan struct{}
@@ -107,8 +108,25 @@ func (m *Manager) InstanceStatus(id uint) (TunnelStatus, string) {
 // StartInstance starts a tunnel instance
 func (m *Manager) StartInstance(id uint) error {
 	inst := m.getInstance(id)
+	inst.actionMu.Lock()
+	defer inst.actionMu.Unlock()
+	if err := m.startInstance(id); err != nil {
+		return err
+	}
+	m.StartForwarders(id)
+	return nil
+}
+
+func (m *Manager) startInstance(id uint) (err error) {
+	inst := m.getInstance(id)
 	inst.mu.Lock()
-	defer inst.mu.Unlock()
+	defer func() {
+		if err != nil && inst.cmd == nil {
+			inst.status = StatusError
+			inst.error = err.Error()
+		}
+		inst.mu.Unlock()
+	}()
 
 	if inst.cmd != nil {
 		return fmt.Errorf("instance %d already running", id)
@@ -191,8 +209,8 @@ func (m *Manager) StartInstance(id uint) error {
 		err := cmd.Wait()
 		// If the tunnel process died on its own, its entry forwarders
 		// must not keep accepting clients into a dead TUN.
-		m.StopForwarders(id)
 		inst.mu.Lock()
+		stopForwarders(inst)
 		if inst.cmd == cmd {
 			inst.cmd = nil
 			if inst.status == StatusStopping {
@@ -212,17 +230,22 @@ func (m *Manager) StartInstance(id uint) error {
 	// Entry forwarders only make sense once the TUN is up; a failed
 	// bind is logged by StartForwarders and shown in the UI, it does
 	// not roll back the tunnel itself.
-	m.StartForwarders(id)
 	return nil
 }
 
 // StopInstance stops a tunnel instance
 func (m *Manager) StopInstance(id uint) error {
-	// Stop the entry first: no new client should be accepted once the
-	// tunnel underneath is going away.
-	m.StopForwarders(id)
+	inst := m.getInstance(id)
+	inst.actionMu.Lock()
+	defer inst.actionMu.Unlock()
+	return m.stopInstance(id)
+}
+
+func (m *Manager) stopInstance(id uint) error {
 	inst := m.getInstance(id)
 	inst.mu.Lock()
+	// Serialize the state transition and listener shutdown with forward starts.
+	stopForwarders(inst)
 	if inst.cmd == nil || inst.cmd.Process == nil {
 		inst.status = StatusStopped
 		inst.mu.Unlock()
@@ -231,7 +254,7 @@ func (m *Manager) StopInstance(id uint) error {
 	inst.status = StatusStopping
 	process, done := inst.cmd.Process, inst.done
 	inst.mu.Unlock()
-	// SIGTERM lets the core release raw sockets and restore kernel settings.
+	// Interrupt lets the core release its TUN device and raw sockets.
 	err := process.Signal(os.Interrupt)
 	if err != nil && err != os.ErrProcessDone {
 		_ = process.Kill()
@@ -253,10 +276,17 @@ func (m *Manager) StopInstance(id uint) error {
 }
 
 func (m *Manager) RestartInstance(id uint) error {
-	if err := m.StopInstance(id); err != nil {
+	inst := m.getInstance(id)
+	inst.actionMu.Lock()
+	defer inst.actionMu.Unlock()
+	if err := m.stopInstance(id); err != nil {
 		return err
 	}
-	return m.StartInstance(id)
+	if err := m.startInstance(id); err != nil {
+		return err
+	}
+	m.StartForwarders(id)
+	return nil
 }
 
 // InstanceUptime returns uptime for an instance

@@ -37,7 +37,9 @@ impl Icmpv6Receiver {
     }
 
     pub fn recv(&mut self, out_buf: &mut [u8]) -> Result<Icmpv6RecvResult, String> {
+        let started = std::time::Instant::now();
         loop {
+            if started.elapsed() >= std::time::Duration::from_secs(1) { return Err("receive timeout".into()); }
             if self.closed.load(Ordering::Relaxed) {
                 return Err("closed".into());
             }
@@ -88,6 +90,7 @@ impl Icmpv6Receiver {
         if n < 20 { return None; }
 
         let ihl = ((buf[0] & 0x0F) as usize) * 4;
+        if buf[0] >> 4 != 4 || ihl < 20 { return None; }
         if n < ihl + 8 { return None; }
 
         // Check protocol

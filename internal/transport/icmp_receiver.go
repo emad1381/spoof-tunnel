@@ -10,10 +10,11 @@ import (
 
 // ICMPReceiver listens for ICMP Echo Request packets.
 type ICMPReceiver struct {
-	handle C.SpoofHandle
-	closed atomic.Bool
-	pktCh  chan receivedPacket
-	doneCh chan struct{}
+	handle   C.SpoofHandle
+	closed   atomic.Bool
+	pktCh    chan receivedPacket
+	doneCh   chan struct{}
+	readDone chan struct{}
 }
 
 // NewICMPReceiver creates an ICMP receiver backed by Rust.
@@ -32,15 +33,19 @@ func NewICMPReceiver(cfg ReceiverConfig) (*ICMPReceiver, error) {
 	}
 
 	r := &ICMPReceiver{
-		handle: h,
-		pktCh:  make(chan receivedPacket, 256),
-		doneCh: make(chan struct{}),
+		handle:   h,
+		pktCh:    make(chan receivedPacket, 256),
+		doneCh:   make(chan struct{}),
+		readDone: make(chan struct{}),
 	}
 	go r.readLoop()
 	return r, nil
 }
 
 func (r *ICMPReceiver) readLoop() {
+	defer close(r.readDone)
+	defer close(r.pktCh)
+	defer C.spoof_icmp_receiver_close(r.handle)
 	buf := make([]byte, 65536)
 	var srcIPBuf [4]byte
 
@@ -97,11 +102,9 @@ func (r *ICMPReceiver) Receive() ([]byte, net.IP, uint16, error) {
 }
 
 func (r *ICMPReceiver) Close() error {
-	if r.closed.Swap(true) {
-		return nil
+	if !r.closed.Swap(true) {
+		close(r.doneCh)
 	}
-	close(r.doneCh)
-	C.spoof_icmp_receiver_close(r.handle)
-	close(r.pktCh)
+	<-r.readDone
 	return nil
 }

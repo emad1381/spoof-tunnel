@@ -4,6 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"math/big"
+	"net"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -90,14 +93,25 @@ func ValidateToken(tokenString string) (*Claims, error) {
 // GenerateRandomString creates a random hex string
 func GenerateRandomString(length int) string {
 	b := make([]byte, length)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
 	return hex.EncodeToString(b)[:length]
 }
 
 // GenerateRandomPort generates a random port between 10000-60000
 func GenerateRandomPort() int {
-	b := make([]byte, 2)
-	rand.Read(b)
-	port := int(b[0])<<8 | int(b[1])
-	return 10000 + (port % 50000)
+	for attempt := 0; attempt < 32; attempt++ {
+		value, err := rand.Int(rand.Reader, big.NewInt(50000))
+		if err != nil {
+			panic(err)
+		}
+		port := 10000 + int(value.Int64())
+		listener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", port))
+		if err == nil {
+			_ = listener.Close()
+			return port
+		}
+	}
+	panic("cannot find an available panel port")
 }

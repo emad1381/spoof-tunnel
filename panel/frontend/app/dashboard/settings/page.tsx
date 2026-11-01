@@ -19,12 +19,13 @@ export default function SettingsPage() {
     e.preventDefault();
     setError("");
     setSuccess("");
-    if (newPass.length < MIN) {
-      setError(`رمز جدید باید حداقل ${MIN} کاراکتر باشد.`);
-      toast.error(`رمز جدید باید حداقل ${MIN} کاراکتر باشد.`);
+    const byteLength = new TextEncoder().encode(newPass).length;
+    if (byteLength < MIN) {
+      setError(`رمز جدید باید حداقل ${MIN} بایت باشد.`);
+      toast.error(`رمز جدید باید حداقل ${MIN} بایت باشد.`);
       return;
     }
-    if (newPass.length > MAX) {
+    if (byteLength > MAX) {
       setError(`رمز جدید حداکثر ${MAX} بایت است.`);
       toast.error(`رمز جدید حداکثر ${MAX} بایت است.`);
       return;
@@ -87,15 +88,13 @@ export default function SettingsPage() {
             />
           </label>
           <label className="field">
-            <span>رمز عبور جدید <small className="hint">({MIN} تا {MAX} کاراکتر)</small></span>
+            <span>رمز عبور جدید <small className="hint">({MIN} تا {MAX} بایت)</small></span>
             <input
               className="input mono"
               type="password"
               value={newPass}
               onChange={(e) => setNewPass(e.target.value)}
               autoComplete="new-password"
-              minLength={MIN}
-              maxLength={MAX}
               required
               dir="ltr"
             />

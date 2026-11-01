@@ -32,6 +32,7 @@
 package forward
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -46,9 +47,10 @@ type Forwarder struct {
 	ListenAddr string // e.g. "0.0.0.0:443"
 	TargetAddr string // e.g. "10.77.0.2:443" (peer TUN IP + inbound port)
 
+	lifecycle sync.Mutex
+	cancel    context.CancelFunc
 	mu        sync.Mutex
 	listener  net.Listener
-	done      chan struct{}
 	wg        sync.WaitGroup
 	listening bool
 	lastErr   string
@@ -89,55 +91,49 @@ func New(listenAddr, targetAddr string) *Forwarder {
 // Start binds the listen port and starts accepting. Starting an already
 // running forwarder is a no-op.
 func (f *Forwarder) Start() error {
+	f.lifecycle.Lock()
+	defer f.lifecycle.Unlock()
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.listening {
-		f.mu.Unlock()
 		return nil
 	}
 	ln, err := net.Listen("tcp", f.ListenAddr)
 	if err != nil {
 		f.lastErr = err.Error()
-		f.mu.Unlock()
 		return fmt.Errorf("forward listen %s: %w", f.ListenAddr, err)
 	}
-	f.listener = ln
-	f.done = make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	f.listener, f.cancel = ln, cancel
 	f.conns = make(map[net.Conn]struct{})
-	f.listening = true
-	f.lastErr = ""
-	f.mu.Unlock()
-
-	log.Printf("[forward] listening %s -> %s", f.ListenAddr, f.TargetAddr)
+	f.listening, f.lastErr = true, ""
 	f.wg.Add(1)
-	go f.acceptLoop()
+	go f.acceptLoop(ctx, ln)
+	log.Printf("[forward] listening %s -> %s", f.ListenAddr, f.TargetAddr)
 	return nil
 }
 
-// Stop closes the listener, closes every active pipe, and waits for
-// the accept loop and pipes to drain. Stopping a stopped forwarder is
-// a no-op. It never waits on an idle connection: Stop closes the pipes'
-// connections, and each pipe also watches the stop signal (see pipe),
-// so a connection accepted in the narrow window between the snapshot
-// and the listener close cannot hang Stop forever.
+// Stop cancels dialing, closes all active sockets, and joins every worker.
+// Serializing lifecycle operations prevents a restart from reusing a WaitGroup
+// or connection map while the preceding generation is still draining.
 func (f *Forwarder) Stop() {
+	f.lifecycle.Lock()
+	defer f.lifecycle.Unlock()
 	f.mu.Lock()
 	if !f.listening {
 		f.mu.Unlock()
 		return
 	}
+	f.listening = false
+	f.cancel()
 	ln := f.listener
-	done := f.done
+	f.listener = nil
 	conns := make([]net.Conn, 0, len(f.conns))
 	for c := range f.conns {
 		conns = append(conns, c)
 	}
-	f.listening = false
-	f.listener = nil
 	f.mu.Unlock()
-
 	_ = ln.Close()
-	close(done)
-	// Unblock idle pipes; their Copy calls then return and wg drains.
 	for _, c := range conns {
 		_ = c.Close()
 	}
@@ -169,82 +165,73 @@ func (f *Forwarder) Stats() Stats {
 	}
 }
 
-func (f *Forwarder) acceptLoop() {
+func (f *Forwarder) acceptLoop(ctx context.Context, ln net.Listener) {
 	defer f.wg.Done()
-	// Capture the listener and stop channel once: Stop nils f.listener,
-	// and re-reading it here would race that write and could call
-	// Accept on nil.
-	f.mu.Lock()
-	ln := f.listener
-	done := f.done
-	f.mu.Unlock()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			select {
-			case <-f.done:
-				return // intentional Stop
-			default:
-				f.mu.Lock()
-				f.lastErr = err.Error()
-				f.mu.Unlock()
-				// Brief backoff so a transient accept error cannot spin.
-				time.Sleep(100 * time.Millisecond)
-				continue
+			if ctx.Err() != nil {
+				return
 			}
+			f.mu.Lock()
+			f.lastErr = err.Error()
+			f.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+			continue
 		}
-		atomic.AddInt64(&f.connections, 1)
+		f.mu.Lock()
+		if ctx.Err() != nil {
+			f.mu.Unlock()
+			_ = conn.Close()
+			return
+		}
+		f.conns[conn] = struct{}{}
 		f.wg.Add(1)
-		go f.pipe(conn, done)
+		f.mu.Unlock()
+		atomic.AddInt64(&f.connections, 1)
+		go f.pipe(ctx, conn)
 	}
 }
 
-func (f *Forwarder) pipe(client net.Conn, done chan struct{}) {
+func (f *Forwarder) pipe(ctx context.Context, client net.Conn) {
 	defer f.wg.Done()
-	f.mu.Lock()
-	f.conns[client] = struct{}{}
-	f.mu.Unlock()
-	defer func() {
-		f.mu.Lock()
-		delete(f.conns, client)
-		f.mu.Unlock()
-	}()
-	target, err := net.DialTimeout("tcp", f.TargetAddr, 10*time.Second)
+	defer func() { _ = client.Close(); f.mu.Lock(); delete(f.conns, client); f.mu.Unlock() }()
+	dialer := net.Dialer{Timeout: 10 * time.Second}
+	target, err := dialer.DialContext(ctx, "tcp", f.TargetAddr)
 	if err != nil {
-		f.mu.Lock()
-		f.lastErr = fmt.Sprintf("dial %s: %v", f.TargetAddr, err)
-		f.mu.Unlock()
-		_ = client.Close()
+		if ctx.Err() == nil {
+			f.mu.Lock()
+			f.lastErr = fmt.Sprintf("dial %s: %v", f.TargetAddr, err)
+			f.mu.Unlock()
+		}
 		return
 	}
+	defer func() { _ = target.Close(); f.mu.Lock(); delete(f.conns, target); f.mu.Unlock() }()
 	f.mu.Lock()
+	if ctx.Err() != nil {
+		f.mu.Unlock()
+		return
+	}
 	f.conns[target] = struct{}{}
 	f.mu.Unlock()
-	defer func() {
-		f.mu.Lock()
-		delete(f.conns, target)
-		f.mu.Unlock()
-	}()
-	// If Stop fires while this pipe is idle, close both ends so the
-	// Copies below return and Stop's wg.Wait cannot hang on it.
-	go func() {
-		<-done
-		_ = client.Close()
-		_ = target.Close()
-	}()
-	copyDone := make(chan struct{}, 2)
-	// Count per Write, not at Copy return: live stats must move while
-	// a long-lived connection is still open, not only after it closes.
+	copied := make(chan struct{}, 2)
 	copyOne := func(dst, src net.Conn, counter *int64) {
-		_, _ = io.Copy(&countingWriter{w: dst, counter: counter}, src)
-		// Closing one side unblocks the other direction's Copy.
-		_ = dst.Close()
-		_ = src.Close()
-		copyDone <- struct{}{}
+		_, copyErr := io.Copy(&countingWriter{w: dst, counter: counter}, src)
+		if copyErr != nil {
+			_ = dst.Close()
+			_ = src.Close()
+		} else if tcp, ok := dst.(*net.TCPConn); ok {
+			// EOF finishes only this direction; the response may still be in flight.
+			_ = tcp.CloseWrite()
+		}
+		copied <- struct{}{}
 	}
 	go copyOne(target, client, &f.bytesUp)
 	go copyOne(client, target, &f.bytesDown)
-	<-copyDone
-	_ = client.Close()
-	_ = target.Close()
+	<-copied
+	<-copied
 }

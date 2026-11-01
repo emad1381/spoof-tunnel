@@ -5,12 +5,14 @@ import "C"
 import (
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
 
 // UDPSender sends spoofed UDP packets via the Rust transport layer.
 type UDPSender struct {
+	mu     sync.Mutex
 	handle C.SpoofHandle
 	closed atomic.Bool
 }
@@ -64,6 +66,14 @@ func NewUDPSender(cfg SenderConfig) (*UDPSender, error) {
 
 // Send builds and sends a spoofed UDP packet via Rust.
 func (s *UDPSender) Send(payload []byte, dstIP net.IP, dstPort uint16) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(payload) > 65507 {
+		return ErrPacketTooLarge
+	}
+	if len(payload) == 0 {
+		return ErrInvalidPacket
+	}
 	if s.closed.Load() {
 		return ErrConnectionClosed
 	}
@@ -88,6 +98,8 @@ func (s *UDPSender) Send(payload []byte, dstIP net.IP, dstPort uint16) error {
 
 // Close releases the Rust handle.
 func (s *UDPSender) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed.Swap(true) {
 		return nil
 	}

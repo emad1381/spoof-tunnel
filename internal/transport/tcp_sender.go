@@ -5,12 +5,14 @@ import "C"
 import (
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
 
 // TCPSender sends spoofed TCP SYN packets via the Rust transport layer.
 type TCPSender struct {
+	mu     sync.Mutex
 	handle C.SpoofHandle
 	closed atomic.Bool
 }
@@ -65,6 +67,14 @@ func NewTCPSender(cfg SenderConfig) (*TCPSender, error) {
 
 // Send builds and sends a spoofed TCP SYN packet via Rust.
 func (t *TCPSender) Send(payload []byte, dstIP net.IP, dstPort uint16) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(payload) > 65495 {
+		return ErrPacketTooLarge
+	}
+	if len(payload) == 0 {
+		return ErrInvalidPacket
+	}
 	if t.closed.Load() {
 		return ErrConnectionClosed
 	}
@@ -89,6 +99,8 @@ func (t *TCPSender) Send(payload []byte, dstIP net.IP, dstPort uint16) error {
 
 // Close releases the Rust handle and raw socket.
 func (t *TCPSender) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.closed.Swap(true) {
 		return nil
 	}

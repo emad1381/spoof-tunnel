@@ -7,12 +7,16 @@ single source of truth for packaging, so the archive is always LF-clean.
 """
 import hashlib
 import pathlib
+import os
 import shutil
 import tarfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
-PREFIX = "spoof-tunnel-linux-amd64"
+ARCH = os.environ.get("SPOOF_ARCH", "amd64")
+if ARCH not in {"amd64", "arm64"}:
+    raise SystemExit("supported package architectures: amd64, arm64")
+PREFIX = f"spoof-tunnel-linux-{ARCH}"
 BINARIES = ["spoof-l3", "spoof-panel"]
 TEXT_FILES = ["install.sh", "README.md", "README-fa.md", "LICENSE", "NOTICE", "SHA256SUMS"]
 
@@ -47,7 +51,10 @@ def main() -> None:
     for name in ["README.md", "README-fa.md", "LICENSE", "NOTICE"]:
         shutil.copy2(ROOT / name, DIST / name)
 
-    sums = "".join(f"{sha256(DIST / name)}  {name}\n" for name in BINARIES)
+    for name in ["install.sh", "README.md", "README-fa.md", "LICENSE", "NOTICE"]:
+        source = DIST / name
+        source.write_bytes(source.read_bytes().replace(b"\r\n", b"\n"))
+    sums = "".join(f"{sha256(DIST / name)}  {name}\n" for name in BINARIES + ["install.sh"])
     (DIST / "SHA256SUMS").write_bytes(sums.encode("utf-8"))
     print("SHA256SUMS:\n" + sums)
 

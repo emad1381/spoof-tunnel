@@ -7,6 +7,7 @@ import (
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/db"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -50,5 +51,64 @@ func TestRestartWaitsAndConfigIsPrivate(t *testing.T) {
 	info, err := os.Stat(m.configFilePath(c.ID))
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("config permissions: %v %v", info, err)
+	}
+}
+
+func TestExitedProcessCannotLeaveForwardersListening(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+	dir := t.TempDir()
+	database, err := db.InitDB(filepath.Join(dir, "panel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { d, _ := database.DB(); d.Close() }()
+	if err = os.WriteFile(filepath.Join(dir, "spoof-l3"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := db.TunnelInstance{Name: "short-lived", Engine: "tun", Mode: "local", LocalIP: "192.0.2.1", RemoteAddr: "192.0.2.2", SpoofIP: "198.51.100.1", PeerSpoofIP: "198.51.100.2", SendTransport: "icmp", RecvTransport: "icmp", RemotePort: 8090, RecvPort: 5001, TunInterface: "sptest", TunAddress: "10.77.0.1/30", TunPeer: "10.77.0.2", TunMTU: 1280, PSK: base64.StdEncoding.EncodeToString(make([]byte, 32))}
+	database.Create(&config)
+	database.Create(&db.ForwardRule{InstanceID: config.ID, Name: "entry", Protocol: "tcp", ListenPort: 0, TargetPort: 443, Enabled: true})
+	manager := NewManager(database, "unused", dir)
+	defer manager.StopAll()
+	for attempt := 0; attempt < 20; attempt++ {
+		if err = manager.StartInstance(config.ID); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			status, _ := manager.InstanceStatus(config.ID)
+			if status == StatusStopped {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("process was not reaped")
+			}
+			time.Sleep(time.Millisecond)
+		}
+		for _, status := range manager.ForwardStatuses(config.ID) {
+			if status.Listening {
+				t.Fatal("forwarder remained open after process exit")
+			}
+		}
+	}
+}
+
+func TestStartupFailureIsVisibleInStatus(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.InitDB(filepath.Join(dir, "panel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { d, _ := database.DB(); d.Close() }()
+	invalid := db.TunnelInstance{Name: "invalid", Engine: "tun", Mode: "local"}
+	database.Create(&invalid)
+	manager := NewManager(database, "unused", dir)
+	if manager.StartInstance(invalid.ID) == nil {
+		t.Fatal("invalid configuration started")
+	}
+	status, message := manager.InstanceStatus(invalid.ID)
+	if status != StatusError || message == "" {
+		t.Fatalf("failure was hidden: %s %q", status, message)
 	}
 }

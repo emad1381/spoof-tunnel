@@ -29,6 +29,7 @@ type TesterState = {
   passed_count: number;
   recv_count: number;
   results: TesterResult[];
+ preview_limit?: number;
 };
 
 export default function TesterPage() {
@@ -55,27 +56,32 @@ export default function TesterPage() {
   const [maxLoss, setMaxLoss] = useState(20);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const requestId = useRef(0);
+  const actionInFlight = useRef(false);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (state.status === "running") {
-      pollRef.current = setInterval(async () => {
-        try {
-          const s = await api.testerStatus();
-          setState({ ...s, results: s.results || [] });
-          if (s.status !== "running" && pollRef.current) {
-            clearInterval(pollRef.current);
-          }
-        } catch {}
-      }, 2000);
-    }
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+    let cancelled = false;
+    let fetching = false;
+    const refresh = async () => {
+      if (fetching || actionInFlight.current || document.visibilityState !== "visible") return;
+      fetching = true;
+      const ticket = ++requestId.current;
+      try {
+        const next = await api.testerStatus();
+        if (!cancelled && ticket === requestId.current) { setState({ ...next, results: next.results || [] }); setError(""); }
+      } catch (e) {
+        if (!cancelled && ticket === requestId.current) setError(e instanceof Error ? e.message : "دریافت وضعیت آزمون ناموفق بود.");
+      } finally { fetching = false; }
     };
-  }, [state.status]);
+    void refresh();
+    pollRef.current = setInterval(refresh, 2000);
+    return () => { cancelled = true; if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
 
   const handleStart = async () => {
+ if (actionInFlight.current) return;
     if (inputType === "text" && !ipList.trim()) {
       setError("فهرست IPهای مبدأ را وارد کن.");
       return;
@@ -89,6 +95,7 @@ export default function TesterPage() {
       return;
     }
     setError("");
+    actionInFlight.current = true; ++requestId.current;
     setLoading(true);
     try {
       await api.testerStart({
@@ -102,31 +109,29 @@ export default function TesterPage() {
         packet_count: packetCount,
         max_packet_loss: maxLoss,
       });
-      setState({
-        status: "running",
-        mode: tab,
-        progress: 0,
-        total_ips: 0,
-        passed_count: 0,
-        recv_count: 0,
-        results: [],
-      });
+      const next = await api.testerStatus();
+      setState({ ...next, results: next.results || [] });
       toast.info(`آزمون ${tab === "receiver" ? "گیرنده" : "فرستنده"} آغاز شد.`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "خطا در شروع آزمون";
       setError(msg);
       toast.error(msg);
     } finally {
+      actionInFlight.current = false;
       setLoading(false);
     }
   };
 
   const handleStop = async () => {
+ if (actionInFlight.current) return;
+ actionInFlight.current = true; ++requestId.current; setLoading(true);
     try {
       await api.testerStop();
-      setState((prev) => ({ ...prev, status: "idle" }));
+const next = await api.testerStatus();
+ setState({ ...next, results: next.results || [] });
       toast.info("آزمون متوقف گردید.");
-    } catch {}
+    } catch (e) { setError(e instanceof Error ? e.message : "توقف آزمون ناموفق بود."); }
+ finally { actionInFlight.current = false; setLoading(false); }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,31 +149,26 @@ export default function TesterPage() {
     e.target.value = "";
   };
 
-  const handleCopyPassedIPs = () => {
-    const ips = results.filter((r) => r.passed).map((r) => r.ip).join("\n");
-    navigator.clipboard.writeText(ips).then(() => {
-      setCopied(true);
-      toast.success("آدرس‌های تأییدشده در کلیپ‌بورد کپی شدند.");
-      setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {});
+  const handleCopyPassedIPs = async () => {
+    try {
+      const all = await api.testerResults();
+      await navigator.clipboard.writeText((all.results || []).filter(result => result.passed).map(result => result.ip).join("\n"));
+      setCopied(true); toast.success("همهٔ آدرس‌های تأییدشده کپی شدند."); setTimeout(() => setCopied(false), 2000);
+    } catch (e) { setError(e instanceof Error ? e.message : "کپی ممکن نشد؛ از دانلود استفاده کنید."); }
   };
 
-  const handleDownloadPassedIPs = () => {
-    const ips = results.filter((r) => r.passed).map((r) => r.ip).join("\n") + "\n";
-    const blob = new Blob([ips], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "spoof-ips.txt";
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("فایل spoof-ips.txt دانلود شد.");
+  const handleDownloadPassedIPs = async () => {
+    try {
+      const blob = await api.testerDownload(); const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a"); anchor.href = url; anchor.download = "spoof-ips.txt"; anchor.click(); URL.revokeObjectURL(url);
+      toast.success("خروجی کامل آدرس‌های تأییدشده دانلود شد.");
+    } catch (e) { setError(e instanceof Error ? e.message : "دانلود ناموفق بود."); }
   };
 
   const results = state.results || [];
   const passedCount = state.passed_count || results.filter((r) => r.passed).length;
   const totalIPs = state.total_ips || results.length;
-  const receivedCount = results.length;
+  const receivedCount = state.recv_count || results.length;
 
   return (
     <div className="page">
@@ -257,7 +257,7 @@ export default function TesterPage() {
                   value={timeout}
                   onChange={(e) => setTimeout_(+e.target.value)}
                   min={5}
-                  max={300}
+                  max={3600}
                 />
               </label>
             )}
@@ -271,7 +271,7 @@ export default function TesterPage() {
                 value={packetCount}
                 onChange={(e) => setPacketCount(+e.target.value)}
                 min={1}
-                max={100}
+                max={1000}
               />
             </label>
 
@@ -448,6 +448,7 @@ export default function TesterPage() {
                 </button>
               </div>
 
+              {receivedCount > results.length && <p className="hint">نمایش {results.length} نتیجه از {receivedCount} آدرس دریافت‌شده؛ کپی و دانلود شامل خروجی کامل‌اند.</p>}
               <div className="table-wrap" style={{ maxHeight: 380, overflowY: "auto" }}>
                 <table className="table">
                   <thead>

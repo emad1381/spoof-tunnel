@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "@/lib/link";
 import { api } from "@/lib/api";
@@ -25,6 +25,8 @@ const NAV_ITEMS = [
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+ const menuButton = useRef<HTMLButtonElement>(null);
+ const drawer = useRef<HTMLElement>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [panelVersion, setPanelVersion] = useState("");
@@ -53,14 +55,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     };
   }, []);
 
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [pathname]);
 
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? "hidden" : "";
+    if (!mobileOpen) return;
+    const focusable = () => Array.from(drawer.current?.querySelectorAll<HTMLElement>('a,button') || []).filter(el => el.getClientRects().length > 0);
+    const trigger = menuButton.current;
+    focusable()[0]?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setMobileOpen(false); return; }
+      if (event.key !== "Tab") return;
+      const items = focusable(); const first = items[0]; const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    window.addEventListener("keydown", keydown);
     return () => {
       document.body.style.overflow = "";
+ window.removeEventListener("keydown", keydown);
+ trigger?.focus();
     };
   }, [mobileOpen]);
 
@@ -74,7 +87,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <header className="top-bar">
         <div className="top-bar-start">
           <button
-            className="hamburger-btn"
+            ref={menuButton}
+ className="hamburger-btn"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="باز و بستن منو"
             aria-expanded={mobileOpen}
@@ -116,8 +130,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="app-body">
         {mobileOpen && <div className="mobile-overlay" onClick={() => setMobileOpen(false)} />}
 
-        <aside className={`sidebar ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`} aria-label="منوی اصلی">
-          <nav className="sidebar-nav">
+        <aside ref={drawer} role={mobileOpen ? "dialog" : undefined} aria-modal={mobileOpen || undefined} className={`sidebar ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`} aria-label="منوی اصلی">
+          <button className="drawer-close header-link-btn" onClick={() => setMobileOpen(false)} type="button">بستن منو ×</button>
+ <nav className="sidebar-nav">
             {NAV_ITEMS.map((item) => {
               const href = basePath + item.path;
               const active = item.exact
@@ -127,6 +142,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               return (
                 <Link
                   key={item.path}
+ aria-label={item.label}
+ title={item.label}
                   href={href}
                   className={`sidebar-item ${active ? "active" : ""}`}
                   onClick={() => setMobileOpen(false)}

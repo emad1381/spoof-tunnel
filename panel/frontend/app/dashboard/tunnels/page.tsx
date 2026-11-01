@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "@/lib/link";
+import { Dialog } from "@/lib/dialog";
 import { api } from "@/lib/api";
 import { useBasePath } from "@/lib/basepath";
 import { useToast } from "@/lib/toast";
@@ -69,29 +70,36 @@ export default function TunnelsPage() {
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [toDelete, setToDelete] = useState<Instance | null>(null);
+  const closeDelete = useCallback(() => setToDelete(null), []);
   const fileRef = useRef<HTMLInputElement>(null);
   const base = useBasePath();
   const { toast } = useToast();
   const lastLoadRef = useRef("");
+ const requestId = useRef(0);
+ const fetching = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
+ if (fetching.current && !force) return;
+ const ticket = ++requestId.current; fetching.current = true;
     try {
       const [list, dash] = await Promise.all([api.listInstances(), api.dashboard()]);
+ if (ticket !== requestId.current) return;
       const map: Record<number, Telemetry> = {};
       for (const d of dash.instances ?? []) if (d.telemetry) map[d.id] = d.telemetry;
       /* Same polling problem as the dashboard: a 4s interval rebuilt
          new arrays/objects every time and re-rendered the whole list
          even when nothing changed. Skip identical payloads. */
       const key = JSON.stringify([list, map]);
+      setError("");
       if (lastLoadRef.current === key) return;
       lastLoadRef.current = key;
       setInstances(list);
       setTelemetry(map);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "دریافت فهرست ناموفق بود");
+      if (ticket === requestId.current) setError(e instanceof Error ? e.message : "دریافت فهرست ناموفق بود");
     } finally {
-      setLoading(false);
+      if (ticket === requestId.current) { fetching.current = false; setLoading(false); }
     }
   }, []);
 
@@ -116,7 +124,7 @@ export default function TunnelsPage() {
         await api.instanceRestart(id);
         toast.success(`اتصال «${name}» مجدداً راه‌اندازی شد.`);
       }
-      setTimeout(load, 700);
+      await load(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "عملیات ناموفق بود";
       setError(msg);
@@ -132,7 +140,7 @@ export default function TunnelsPage() {
       await api.deleteInstance(toDelete.id);
       toast.success(`اتصال «${toDelete.name}» حذف گردید.`);
       setToDelete(null);
-      await load();
+      await load(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "حذف ناموفق بود";
       setError(msg);
@@ -152,7 +160,7 @@ export default function TunnelsPage() {
       if (!config.name) config.name = file.name.replace(/\.json$/i, "");
       await api.createInstance(config);
       toast.success(`اتصال «${config.name}» از فایل وارد شد.`);
-      await load();
+      await load(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "ورود فایل ناموفق بود";
       setError(msg);
@@ -281,9 +289,7 @@ export default function TunnelsPage() {
       </div>
 
       {toDelete && (
-        <div className="modal-overlay" onClick={() => setToDelete(null)}>
-          <div className="modal-content" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ marginBottom: 12 }}>حذف اتصال</h2>
+        <Dialog title="حذف اتصال" onClose={closeDelete}>
             <p className="page-intro" style={{ marginBottom: 20 }}>
               آیا از حذف اتصال «{toDelete.name}» مطمئن هستید؟ فایل‌های تنظیمات محلی پاک خواهند شد.
             </p>
@@ -291,8 +297,7 @@ export default function TunnelsPage() {
               <button className="btn btn-ghost" onClick={() => setToDelete(null)}>انصراف</button>
               <button className="btn btn-danger" onClick={remove}>حذف قطعی</button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
     </div>
   );

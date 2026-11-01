@@ -12,8 +12,9 @@ type UDPReceiver struct {
 	udpConn *net.UDPConn
 	closed  atomic.Bool
 
-	pktCh  chan receivedPacket
-	doneCh chan struct{}
+	pktCh    chan receivedPacket
+	doneCh   chan struct{}
+	readDone chan struct{}
 }
 
 // NewUDPReceiver creates a standard UDP receiver.
@@ -33,10 +34,11 @@ func NewUDPReceiver(cfg ReceiverConfig) (*UDPReceiver, error) {
 	}
 
 	r := &UDPReceiver{
-		cfg:     cfg,
-		udpConn: conn,
-		pktCh:   make(chan receivedPacket, 4096),
-		doneCh:  make(chan struct{}),
+		cfg:      cfg,
+		udpConn:  conn,
+		pktCh:    make(chan receivedPacket, 4096),
+		doneCh:   make(chan struct{}),
+		readDone: make(chan struct{}),
 	}
 	go r.readLoop()
 	return r, nil
@@ -44,6 +46,8 @@ func NewUDPReceiver(cfg ReceiverConfig) (*UDPReceiver, error) {
 
 // readLoop reads individual UDP datagrams.
 func (r *UDPReceiver) readLoop() {
+	defer close(r.readDone)
+	defer close(r.pktCh)
 	buf := make([]byte, 65536)
 	r.udpConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 
@@ -102,11 +106,10 @@ func (r *UDPReceiver) Receive() ([]byte, net.IP, uint16, error) {
 
 // Close shuts down the receiver.
 func (r *UDPReceiver) Close() error {
-	if r.closed.Swap(true) {
-		return nil
+	if !r.closed.Swap(true) {
+		close(r.doneCh)
+		_ = r.udpConn.Close()
 	}
-	close(r.doneCh)
-	err := r.udpConn.Close()
-	close(r.pktCh)
-	return err
+	<-r.readDone
+	return nil
 }

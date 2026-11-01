@@ -76,15 +76,22 @@ export default function Dashboard() {
   const base = useBasePath();
   const { toast } = useToast();
   const lastPollRef = useRef("");
+ const requestId = useRef(0);
+ const fetching = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
+ if (fetching.current && !force) return;
+ const ticket = ++requestId.current; fetching.current = true;
     try {
       const [d, s] = await Promise.all([api.dashboard(), api.system()]);
+ if (ticket !== requestId.current) return;
       /* Polling every 3.5s used to re-render the whole page even when
          nothing changed (new objects every time, plus a new timestamp).
          Skip the render when the payload is identical; live data still
          updates the moment tx/rx, status or uptime actually changes. */
       const key = JSON.stringify([d, s]);
+      setError("");
+ setUpdated(new Date().toLocaleTimeString("fa-IR"));
       if (lastPollRef.current === key) return;
       lastPollRef.current = key;
       setDash(d);
@@ -92,8 +99,8 @@ export default function Dashboard() {
       setError("");
       setUpdated(new Date().toLocaleTimeString("fa-IR"));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "دریافت وضعیت ناموفق بود");
-    }
+      if (ticket === requestId.current) setError(e instanceof Error ? e.message : "دریافت وضعیت ناموفق بود");
+    } finally { if (ticket === requestId.current) fetching.current = false; }
   }, []);
 
   useEffect(() => {
@@ -114,7 +121,7 @@ export default function Dashboard() {
         await api.instanceStart(i.id);
         toast.success(`اتصال «${i.name}» راه‌اندازی شد.`);
       }
-      await refresh();
+      await refresh(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "عملیات ناموفق بود";
       setError(msg);
@@ -127,6 +134,7 @@ export default function Dashboard() {
   const instances = dash?.instances ?? [];
   const primary = instances.find((i) => i.engine === "tun" && i.status === "running") || instances[0];
   const primaryTelemetry = primary?.telemetry;
+  const totalTraffic = instances.reduce((sum, instance) => ({ tx: sum.tx + (instance.telemetry?.tx_bytes || 0), rx: sum.rx + (instance.telemetry?.rx_bytes || 0) }), { tx: 0, rx: 0 });
   const isPeerConnected = primary?.engine === "tun" && !!primaryTelemetry?.peer_connected;
 
   return (
@@ -141,7 +149,7 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="row">
-          <button className="btn btn-ghost" onClick={() => { refresh(); toast.info("اطلاعات به‌روزرسانی شد."); }}>
+          <button className="btn btn-ghost" onClick={() => { void refresh(true); toast.info("اطلاعات به‌روزرسانی شد."); }}>
             <IconRestart size={14} />
             <span>به‌روزرسانی</span>
           </button>
@@ -154,7 +162,7 @@ export default function Dashboard() {
       {error && (
         <div role="alert" className="banner error">
           <span>{error}</span>
-          <button className="btn btn-ghost btn-sm" onClick={refresh}>تلاش دوباره</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => void refresh(true)}>تلاش دوباره</button>
         </div>
       )}
 
@@ -211,7 +219,7 @@ export default function Dashboard() {
           <div style={{ fontSize: 12.5, color: "var(--text-muted)", borderTop: "1px solid var(--border-subtle)", paddingTop: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
             <span>ضربان قلب احرازشده: <strong>هر ۳ ثانیه</strong></span>
             <span>پنجرهٔ ضدبازپخش: <strong>۱۰۲۴ بسته</strong></span>
-            <span>نرخ افت بسته: <strong>{primaryTelemetry?.drops ? `${fa(primaryTelemetry.drops)} drop` : "صفر"}</strong></span>
+            <span>حذف محلی بسته: <strong>{primaryTelemetry?.drops ? `${fa(primaryTelemetry.drops)} drop` : "صفر"}</strong></span>
           </div>
         </section>
 
@@ -220,20 +228,20 @@ export default function Dashboard() {
           <div>
             <div className="eyebrow">THROUGHPUT VOLUME</div>
             <h2>ترافیک کل</h2>
-            <p className="hint">مجموع حجم رد و بدل شده روی این سرور.</p>
+            <p className="hint">مجموع حجم اتصال‌ها در اجرای فعلی؛ با شروع دوبارهٔ هر اتصال، شمارندهٔ آن صفر می‌شود.</p>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, padding: "8px 0" }}>
             <div style={{ background: "var(--card-2)", padding: 14, borderRadius: 12, border: "1px solid var(--border-subtle)" }}>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>↑ ارسال (TX)</div>
               <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: "var(--text)" }}>
-                {bytes(primaryTelemetry?.tx_bytes)}
+                {bytes(totalTraffic.tx)}
               </div>
             </div>
             <div style={{ background: "var(--card-2)", padding: 14, borderRadius: 12, border: "1px solid var(--border-subtle)" }}>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>↓ دریافت (RX)</div>
               <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: "var(--accent-cyan)" }}>
-                {bytes(primaryTelemetry?.rx_bytes)}
+                {bytes(totalTraffic.rx)}
               </div>
             </div>
           </div>
@@ -393,7 +401,7 @@ export default function Dashboard() {
           </div>
           <p style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.9 }}>
             آدرس مبدأ در سطح لایهٔ شبکه با IPهای جعلی در حال گردش جایگزین می‌شود، در حالی که مقصد همیشه IP واقعی سرور است.
-            تمام بسته‌های داخلی به صورت سرتاسری با استاندارد <strong>AES-256-GCM</strong> رمزگذاری شده و در برابر شنود و فیلترینگ هوشمند محافظت می‌شوند.
+            تمام بسته‌های داخلی به صورت سرتاسری با استاندارد <strong>AES-256-GCM</strong> رمزگذاری می‌شوند. عبور بسته‌ها به سیاست و فیلترهای شبکهٔ مسیر بستگی دارد.
           </p>
         </section>
 

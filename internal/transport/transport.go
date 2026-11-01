@@ -1,6 +1,9 @@
 package transport
 
-import "net"
+import (
+	"fmt"
+	"net"
+)
 
 // Sender sends spoofed packets over the wire.
 type Sender interface {
@@ -38,6 +41,14 @@ func (c *SenderConfig) Validate() error {
 	}
 	if c.MTU == 0 {
 		c.MTU = 1400
+	}
+	if c.MTU < 68 || c.MTU > 1500 {
+		return fmt.Errorf("MTU must be 68–1500")
+	}
+	for _, ip := range c.GetIPList() {
+		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.IPv4bcast) {
+			return fmt.Errorf("source must be unicast IPv4")
+		}
 	}
 	return nil
 }

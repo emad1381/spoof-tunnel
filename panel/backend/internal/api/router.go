@@ -12,19 +12,21 @@ import (
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/manager"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"gorm.io/gorm"
 )
 
 // Server is the API server
 type Server struct {
-	db      *gorm.DB
-	manager *manager.Manager
-	tester  *tester.Runner
-	router  *gin.Engine
-	webPath string
-	version string
-	loginMu sync.Mutex
-	logins  map[string][]time.Time
+	db         *gorm.DB
+	manager    *manager.Manager
+	tester     *tester.Runner
+	router     *gin.Engine
+	webPath    string
+	version    string
+	mutationMu sync.Mutex
+	loginMu    sync.Mutex
+	logins     map[string][]time.Time
 }
 
 // NewServer creates a new API server. version is the panel release
@@ -134,9 +136,11 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 		header := c.GetHeader("Authorization")
 		if header != "" {
 			tokenStr = strings.TrimPrefix(header, "Bearer ")
-		} else {
-			// Fallback to query param (used by WebSocket)
-			tokenStr = c.Query("token")
+		} else if websocket.IsWebSocketUpgrade(c.Request) {
+			protocols := websocket.Subprotocols(c.Request)
+			if len(protocols) == 2 && protocols[0] == "spoof-logs" {
+				tokenStr = protocols[1]
+			}
 		}
 
 		if tokenStr == "" {
@@ -160,3 +164,6 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// Close joins the diagnostic worker before application shutdown.
+func (s *Server) Close() { s.tester.Stop() }

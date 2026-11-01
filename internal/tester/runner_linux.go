@@ -50,6 +50,11 @@ func (r *Runner) doSend(cfg TesterConfig, ranges *IPRangeSet, cancel <-chan stru
 		}
 
 		for p := 0; p < packetCount; p++ {
+			select {
+			case <-cancel:
+				return false
+			default:
+			}
 			var pkt []byte
 			seq := uint16((idx*packetCount + p) % 65536)
 			switch cfg.Protocol {
@@ -74,6 +79,9 @@ func (r *Runner) doSend(cfg TesterConfig, ranges *IPRangeSet, cancel <-chan stru
 	})
 
 	log.Printf("[tester-sender] done -- sent: %d, errors: %d", sent, errCount)
+	if errCount > 0 {
+		return fmt.Errorf("%d packets failed to send (%d sent)", errCount, sent)
+	}
 	return nil
 }
 
@@ -148,7 +156,7 @@ func (r *Runner) doReceive(cfg TesterConfig, ranges *IPRangeSet, cancel <-chan s
 		}
 
 		ihl := int(buf[0]&0x0f) * 4
-		if n < ihl {
+		if buf[0]>>4 != 4 || ihl < 20 || n < ihl {
 			continue
 		}
 		srcIPu32 := binary.BigEndian.Uint32(buf[12:16])
@@ -157,6 +165,12 @@ func (r *Runner) doReceive(cfg TesterConfig, ranges *IPRangeSet, cancel <-chan s
 			continue
 		}
 
+		if proto == syscall.IPPROTO_ICMP && (n < ihl+8 || buf[ihl] != 8 || buf[ihl+1] != 0) {
+			continue
+		}
+		if proto == syscall.IPPROTO_TCP && (n < ihl+20 || buf[ihl+13]&0x02 == 0) {
+			continue
+		}
 		// Filter by port if specified and protocol supports it (e.g. TCP)
 		if cfg.DstPort > 0 && proto == syscall.IPPROTO_TCP {
 			if n < ihl+4 {
@@ -169,7 +183,20 @@ func (r *Runner) doReceive(cfg TesterConfig, ranges *IPRangeSet, cancel <-chan s
 		}
 
 		r.recvMu.Lock()
-		r.received[srcIPu32]++
+		before, exists := r.received[srcIPu32]
+		if !exists {
+			r.receivedOrder = append(r.receivedOrder, srcIPu32)
+		}
+		after := before + 1
+		if after > packetCount {
+			after = packetCount
+		}
+		r.received[srcIPu32] = after
+		beforePassed := exists && float64(packetCount-before)/float64(packetCount)*100 <= maxLoss
+		afterPassed := float64(packetCount-after)/float64(packetCount)*100 <= maxLoss
+		if !beforePassed && afterPassed {
+			r.recvPassed++
+		}
 		r.recvMu.Unlock()
 	}
 
@@ -191,6 +218,7 @@ buildResults:
 	// Clear the live received map to free memory
 	r.recvMu.Lock()
 	r.received = nil
+	r.receivedOrder = nil
 	r.recvMu.Unlock()
 
 	return nil

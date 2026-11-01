@@ -28,6 +28,7 @@ type Config struct {
 	// single SpoofSource is used.
 	SpoofSources []string `json:"spoof_sources,omitempty"`
 	PeerSpoof    string   `json:"peer_spoof"`
+	PeerSpoofs   []string `json:"peer_spoofs,omitempty"`
 	Send         string   `json:"send"`
 	Receive      string   `json:"receive"`
 	SendPort     int      `json:"send_port"`
@@ -72,7 +73,7 @@ func Protocol(s string) int {
 
 func unicast4(value string) (net.IP, bool) {
 	ip := net.ParseIP(value)
-	if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() {
+	if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.IPv4bcast) {
 		return nil, false
 	}
 	return ip.To4(), true
@@ -104,22 +105,50 @@ func (c Config) Sources() ([]net.IP, error) {
 	if len(out) == 0 {
 		return nil, fmt.Errorf("at least one spoof source address is required")
 	}
-	if _, ok := seen[c.PeerSpoof]; ok {
-		return nil, fmt.Errorf("spoof source must differ from the peer spoof address")
+	peers, err := c.PeerSources()
+	if err != nil {
+		return nil, err
+	}
+	for _, peer := range peers {
+		if seen[peer.String()] {
+			return nil, fmt.Errorf("spoof source must differ from all peer spoof addresses")
+		}
 	}
 	return out, nil
+}
+
+// PeerSources is the explicit allowlist of spoofed sources on the other end.
+// The legacy single-address field remains valid for existing configurations.
+func (c Config) PeerSources() ([]net.IP, error) {
+	raw := c.PeerSpoofs
+	if len(raw) == 0 {
+		raw = []string{c.PeerSpoof}
+	}
+	seen := map[string]bool{}
+	var ips []net.IP
+	for _, value := range raw {
+		ip, ok := unicast4(value)
+		if !ok {
+			return nil, fmt.Errorf("peer spoof %q must be a unicast IPv4 address", value)
+		}
+		if !seen[ip.String()] {
+			ips = append(ips, ip)
+			seen[ip.String()] = true
+		}
+	}
+	return ips, nil
 }
 
 func (c Config) Validate() error {
 	if c.Role != "local" && c.Role != "remote" {
 		return fmt.Errorf("role must be local or remote")
 	}
-	for _, v := range []string{c.LocalIP, c.PeerIP, c.PeerSpoof} {
+	for _, v := range []string{c.LocalIP, c.PeerIP} {
 		if _, ok := unicast4(v); !ok {
 			return fmt.Errorf("endpoint and peer spoof addresses must be unicast IPv4")
 		}
 	}
-	if c.LocalIP == c.PeerIP {
+	if net.ParseIP(c.LocalIP).Equal(net.ParseIP(c.PeerIP)) {
 		return fmt.Errorf("real endpoints must differ")
 	}
 	if _, err := c.Sources(); err != nil {
@@ -141,6 +170,14 @@ func (c Config) Validate() error {
 	peer := net.ParseIP(c.PeerAddress)
 	if peer == nil || peer.To4() == nil || !network.Contains(peer) || peer.Equal(ip) {
 		return fmt.Errorf("TUN peer must be a different address in the same subnet")
+	}
+	networkIP := network.IP.To4()
+	broadcast := make(net.IP, 4)
+	for i := range broadcast {
+		broadcast[i] = networkIP[i] | ^network.Mask[i]
+	}
+	if ip.Equal(networkIP) || ip.Equal(broadcast) || peer.Equal(networkIP) || peer.Equal(broadcast) {
+		return fmt.Errorf("TUN addresses must be usable host addresses")
 	}
 	if network.Contains(net.ParseIP(c.LocalIP)) || network.Contains(net.ParseIP(c.PeerIP)) {
 		return fmt.Errorf("TUN subnet must not contain real server endpoints")

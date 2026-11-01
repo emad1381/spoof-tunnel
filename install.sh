@@ -1,39 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo 'Run with sudo bash install.sh' >&2; exit 1; }
-[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'This package requires Linux amd64; build from source for another Linux architecture.' >&2; exit 1; }
+[[ $(uname -s) == Linux ]] || { echo 'Linux required.' >&2; exit 1; }
+case $(uname -m) in
+  x86_64) arch=amd64 ;;
+  aarch64|arm64) arch=arm64 ;;
+  *) echo 'Supported architectures: amd64, arm64.' >&2; exit 1 ;;
+esac
 for cmd in curl tar sha256sum; do command -v "$cmd" >/dev/null || { echo "Install $cmd first." >&2; exit 1; }; done
-
-printf '\n  ╔══════════════════════════════════════════════════╗\n'
-printf '  ║             SPOOF TUNNEL INSTALLER               ║\n'
-printf '  ╚══════════════════════════════════════════════════╝\n\n'
-
-base=https://github.com/emad1381/spoof-tunnel/releases/download
-asset=spoof-tunnel-linux-amd64.tar.gz
-
-# Try the requested tag first, then the current and legacy tag names so the
-# one-line installer keeps working during release transitions.
-candidates=()
-[[ -n "${SPOOF_RELEASE:-}" ]] && candidates+=("$SPOOF_RELEASE")
-candidates+=("v0.3.0" "v0.2.3" "v0.2.2" "v0.2.1" "v0.2.0" "emad-v0.2.0")
-
+asset="spoof-tunnel-linux-$arch.tar.gz"
+if [[ -n "${SPOOF_RELEASE:-}" ]]; then
+  [[ "$SPOOF_RELEASE" =~ ^(panel-|emad-)?v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid release tag.' >&2; exit 1; }
+  base="https://github.com/emad1381/spoof-tunnel/releases/download/$SPOOF_RELEASE"
+else
+  base='https://github.com/emad1381/spoof-tunnel/releases/latest/download'
+fi
 work=$(mktemp -d -t spoof-install.XXXXXX)
 trap 'rm -rf -- "$work"' EXIT
-
-echo "  [1/3] Downloading package..."
-downloaded=""
-for tag in "${candidates[@]}"; do
-  [[ "$tag" =~ ^(emad-)?v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag: $tag" >&2; exit 1; }
-  if curl -fsSL --retry 2 --proto '=https' "$base/$tag/$asset" -o "$work/package.tar.gz" 2>/dev/null; then
-    downloaded=$tag
-    break
-  fi
-done
-[[ -n "$downloaded" ]] || { echo 'Download failed: no release package available.' >&2; exit 1; }
-echo "        using release $downloaded"
-
-echo "  [2/3] Extracting files..."
-tar -xzf "$work/package.tar.gz" -C "$work"
-
-echo "  [3/3] Setting up service..."
-bash "$work/spoof-tunnel-linux-amd64/install.sh"
+printf 'Downloading %s\n' "$asset"
+curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 --proto '=https' "$base/$asset" -o "$work/$asset"
+# New releases publish archive checksums. Older packages still verify their
+# embedded binary checksums in the package installer.
+if curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 --proto '=https' "$base/SHA256SUMS" -o "$work/archive-sums" 2>/dev/null; then
+  sum=$(awk -v name="$asset" '$2 == name { print $1 }' "$work/archive-sums")
+  [[ "$sum" =~ ^[a-fA-F0-9]{64}$ ]] || { echo 'Missing archive checksum.' >&2; exit 1; }
+  (cd "$work" && printf '%s  %s\n' "$sum" "$asset" | sha256sum -c -)
+fi
+tar -xzf "$work/$asset" -C "$work"
+bash "$work/spoof-tunnel-linux-$arch/install.sh"

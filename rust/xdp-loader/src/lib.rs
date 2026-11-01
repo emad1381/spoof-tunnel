@@ -197,8 +197,10 @@ pub unsafe extern "C" fn spoof_xdp_receiver_recv(
 
     let receiver = &mut *(handle as *mut XdpReceiver);
     let ring_raw_fd = receiver.ring.as_raw_fd();
+    let started = std::time::Instant::now();
 
     loop {
+        if started.elapsed() >= std::time::Duration::from_millis(100) { return 0; }
         if receiver.closed.load(Ordering::Relaxed) {
             return -2;
         }

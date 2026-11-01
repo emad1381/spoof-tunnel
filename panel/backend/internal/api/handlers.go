@@ -197,6 +197,8 @@ func (s *Server) handleListInstances(c *gin.Context) {
 }
 
 func (s *Server) handleCreateInstance(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	var inst db.TunnelInstance
 	if err := c.ShouldBindJSON(&inst); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -242,7 +244,8 @@ func (s *Server) handleCreateInstance(c *gin.Context) {
 		return
 	}
 	inst.ID = 0 // auto-increment
-	if err := s.db.Create(&inst).Error; err != nil {
+	inst.CreatedAt, inst.UpdatedAt = time.Time{}, time.Time{}
+	if err := db.SaveTunnel(s.db, &inst, true); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -275,6 +278,8 @@ func (s *Server) handleGetInstance(c *gin.Context) {
 }
 
 func (s *Server) handleUpdateInstance(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	id, err := parseID(c)
 	if err != nil {
 		return
@@ -287,28 +292,35 @@ func (s *Server) handleUpdateInstance(c *gin.Context) {
 	}
 
 	status, _ := s.manager.InstanceStatus(id)
-	if status == "running" || status == "stopping" {
+	if status == "running" || status == "starting" || status == "stopping" {
 		c.JSON(409, gin.H{"error": "Stop the tunnel before editing its configuration"})
 		return
 	}
+	version := existing.UpdatedAt
 	if err := c.ShouldBindJSON(&existing); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	if !existing.UpdatedAt.Equal(version) {
+		c.JSON(409, gin.H{"error": "Configuration changed on the server; reload before saving"})
+		return
+	}
 	existing.ID = id
 	if err := existing.Validate(); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if err := s.db.Save(&existing).Error; err != nil {
-		c.JSON(500, gin.H{"error": "save failed"})
+	if err := db.SaveTunnel(s.db, &existing, false); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, existing)
 }
 
 func (s *Server) handleDeleteInstance(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	id, err := parseID(c)
 	if err != nil {
 		return
@@ -329,6 +341,8 @@ func (s *Server) handleDeleteInstance(c *gin.Context) {
 // ── Instance Control ──
 
 func (s *Server) handleInstanceStart(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	id, err := parseID(c)
 	if err != nil {
 		return
@@ -341,6 +355,8 @@ func (s *Server) handleInstanceStart(c *gin.Context) {
 }
 
 func (s *Server) handleInstanceStop(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	id, err := parseID(c)
 	if err != nil {
 		return
@@ -353,6 +369,8 @@ func (s *Server) handleInstanceStop(c *gin.Context) {
 }
 
 func (s *Server) handleInstanceRestart(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	id, err := parseID(c)
 	if err != nil {
 		return
@@ -379,7 +397,7 @@ func (s *Server) handleInstanceStatus(c *gin.Context) {
 }
 
 // WebSocket log streaming per instance
-var upgrader = websocket.Upgrader{}
+var upgrader = websocket.Upgrader{Subprotocols: []string{"spoof-logs"}}
 
 func (s *Server) handleInstanceLogs(c *gin.Context) {
 	id, err := parseID(c)
@@ -392,10 +410,14 @@ func (s *Server) handleInstanceLogs(c *gin.Context) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(1024)
 
 	// Send existing logs
 	for _, line := range s.manager.InstanceLogs(id, 100) {
-		conn.WriteMessage(websocket.TextMessage, []byte(line))
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(line)); err != nil {
+			return
+		}
 	}
 
 	// Subscribe for new logs
@@ -420,6 +442,7 @@ func (s *Server) handleInstanceLogs(c *gin.Context) {
 			if !ok {
 				return
 			}
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(line)); err != nil {
 				return
 			}
@@ -456,6 +479,8 @@ func (s *Server) handleGetInstanceSpoofIPs(c *gin.Context) {
 }
 
 func (s *Server) handleSetInstanceSpoofIPs(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	id, err := parseID(c)
 	if err != nil {
 		return
@@ -488,12 +513,23 @@ func (s *Server) handleSetInstanceSpoofIPs(c *gin.Context) {
 		}
 		count++
 	}
-	if err := s.db.Model(&db.TunnelInstance{}).Where("id = ?", id).Update("spoof_ip_list", content).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	var inst db.TunnelInstance
+	if err := s.db.First(&inst, id).Error; err != nil {
+		c.JSON(404, gin.H{"error": "instance not found"})
+		return
+	}
+	status, _ := s.manager.InstanceStatus(id)
+	if status == "running" || status == "starting" || status == "stopping" {
+		c.JSON(409, gin.H{"error": "Stop the tunnel before editing its configuration"})
+		return
+	}
+	inst.SpoofIPList = content
+	if err := db.SaveTunnel(s.db, &inst, false); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ok": true, "count": count})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "count": count, "instance": inst})
 }
 
 // ── Tester Handlers ──
@@ -605,13 +641,13 @@ func (s *Server) handleTesterStart(c *gin.Context) {
 func (s *Server) handleTesterStatus(c *gin.Context) {
 	state := s.tester.State()
 	// Load results: live during running receiver, from disk when done
-	if state.Status == "done" || (state.Status == "running" && state.Mode == "receiver") {
-		results, err := s.tester.Results()
+	if state.Status == "done" || state.Mode == "receiver" {
+		results, err := s.tester.ResultsLimit(200)
 		if err == nil {
 			state.Results = results
 		}
 	}
-	c.JSON(http.StatusOK, state)
+	c.JSON(http.StatusOK, gin.H{"status": state.Status, "mode": state.Mode, "error": state.Error, "progress": state.Progress, "total_ips": state.TotalIPs, "passed_count": state.PassedCount, "recv_count": state.RecvCount, "results": state.Results, "preview_limit": 200})
 }
 
 func (s *Server) handleTesterStop(c *gin.Context) {
@@ -682,18 +718,10 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Password must be 12–72 bytes"})
 		return
 	}
-	hash, err := auth.HashPassword(req.NewPassword)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "Invalid password"})
-		return
-	}
-	user.TokenVersion++
-	if err := s.db.Model(&user).Updates(map[string]interface{}{"password_hash": hash, "token_version": user.TokenVersion}).Error; err != nil {
+	if err := db.ChangePassword(s.db, &user, req.NewPassword); err != nil {
 		c.JSON(500, gin.H{"error": "password update failed"})
 		return
 	}
-	s.db.Save(&db.Setting{Key: "admin_password", Value: req.NewPassword})
-
 	// Generate new token
 	token, _ := auth.GenerateToken(user.ID, user.Username, user.TokenVersion)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "token": token})

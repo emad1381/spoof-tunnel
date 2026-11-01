@@ -48,10 +48,11 @@ type TunnelInstance struct {
 	ClientPort  int    `gorm:"default:5001" json:"client_port"`
 
 	// Spoof
-	SpoofIP     string `json:"spoof_ip"`
-	SpoofPort   int    `gorm:"default:443" json:"spoof_port"`
-	PeerSpoofIP string `json:"peer_spoof_ip"`
-	SpoofIPList string `gorm:"type:text" json:"spoof_ip_list"` // inline IPs, newline-separated
+	SpoofIP         string `json:"spoof_ip"`
+	SpoofPort       int    `gorm:"default:443" json:"spoof_port"`
+	PeerSpoofIP     string `json:"peer_spoof_ip"`
+	PeerSpoofIPList string `gorm:"type:text" json:"peer_spoof_ip_list"`
+	SpoofIPList     string `gorm:"type:text" json:"spoof_ip_list"` // inline IPs, newline-separated
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -77,7 +78,7 @@ type ForwardRule struct {
 	Protocol   string `gorm:"default:tcp" json:"protocol"`
 	ListenPort int    `gorm:"not null" json:"listen_port"`
 	TargetPort int    `gorm:"not null" json:"target_port"`
-	Enabled    bool   `gorm:"default:true" json:"enabled"`
+	Enabled    bool   `json:"enabled"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -106,6 +107,18 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		return nil, err
 	}
 
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxOpenConns(1)
+	for _, statement := range []string{"PRAGMA busy_timeout=5000", "PRAGMA secure_delete=ON"} {
+		if err := db.Exec(statement).Error; err != nil {
+			_ = sqlDB.Close()
+			return nil, err
+		}
+	}
+
 	// Auto-migrate all models
 	if err := db.AutoMigrate(
 		&User{},
@@ -114,6 +127,11 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&TrafficStat{},
 		&Setting{},
 	); err != nil {
+		return nil, err
+	}
+
+	// Remove the legacy recoverable password copy. The bcrypt hash is retained.
+	if err := db.Where("key = ?", "admin_password").Delete(&Setting{}).Error; err != nil {
 		return nil, err
 	}
 

@@ -1,5 +1,7 @@
 [workspace]
+resolver = "2"
 members = ["spoof-transport", "xdp-loader"]
+default-members = ["spoof-transport"]
 exclude = ["xdp-ebpf"]
 
 [profile.release]

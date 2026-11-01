@@ -39,6 +39,7 @@ var webFS embed.FS
 var panelVersion = "dev"
 
 func main() {
+	bind := flag.String("bind", "0.0.0.0", "panel bind IPv4 address")
 	port := flag.Int("port", 0, "panel port (0 = auto from DB or random)")
 	setup := flag.Bool("setup", false, "run initial setup with random credentials")
 	setupUser := flag.String("setup-user", "", "setup: admin username")
@@ -76,6 +77,18 @@ func main() {
 
 	auth.SetSecret(getOrCreateSetting(database, "jwt_secret", func() string { return auth.GenerateRandomString(64) }))
 	_ = os.Chmod(dbPath, 0600)
+	credsPath := filepath.Join(dataDir, "credentials.txt")
+	if data, err := os.ReadFile(credsPath); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(line, "Password:") {
+				lines[i] = "Password: not stored; use --setup --setup-pass to reset"
+			}
+		}
+		if err := os.WriteFile(credsPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
+			log.Fatal(err)
+		}
+	}
 	// Handle setup mode
 	if isSetup {
 		runSetup(database, *setupUser, *setupPass, *setupPort, dataDir)
@@ -189,6 +202,11 @@ func main() {
 			return
 		}
 
+		// Static-export metadata requests the favicon at the origin root.
+		if path == "/favicon.ico" && serveFile(c, "favicon.ico") {
+			return
+		}
+
 		// Allow /_next/static assets from root (Next.js hardcodes these paths)
 		if strings.HasPrefix(path, "/_next/") {
 			filePath := path[1:] // remove leading /
@@ -248,11 +266,12 @@ func main() {
 	go func() {
 		<-sigCh
 		log.Println("Shutting down...")
+		srv.Close()
 		mgr.StopAll()
 		os.Exit(0)
 	}()
 
-	addr := fmt.Sprintf("0.0.0.0:%d", listenPort)
+	addr := net.JoinHostPort(*bind, fmt.Sprint(listenPort))
 	ip := detectServerIP()
 	fullURL := fmt.Sprintf("http://%s:%d/%s/", ip, listenPort, webPath)
 	log.Printf("╔══════════════════════════════════════════════════════════════════════╗")
@@ -260,7 +279,7 @@ func main() {
 	log.Printf("║  %-68s║", fullURL)
 	log.Printf("╚══════════════════════════════════════════════════════════════════════╝")
 
-	httpServer := &http.Server{Addr: addr, Handler: srv.Router(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
+	httpServer := &http.Server{Addr: addr, Handler: srv.Router(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
@@ -268,6 +287,9 @@ func main() {
 
 // detectServerIP attempts to determine the external public IPv4 of this host.
 func detectServerIP() string {
+	if value := os.Getenv("SPOOF_PUBLIC_IP"); net.ParseIP(value).To4() != nil {
+		return value
+	}
 	endpoints := []string{
 		"https://api.ipify.org",
 		"https://ifconfig.me/ip",
@@ -309,6 +331,16 @@ func getOrCreateSetting(database *gorm.DB, key string, defaultFn func() string) 
 }
 
 func runSetup(database *gorm.DB, username, password string, port int, dataDir string) {
+	if port < 0 || port > 65535 {
+		log.Fatal("Port must be 1–65535 (or 0 for automatic)")
+	}
+	if password != "" && (len(password) < 12 || len(password) > 72) {
+		log.Fatal("Password must be 12–72 bytes")
+	}
+	username = strings.TrimSpace(username)
+	if len(username) > 100 {
+		log.Fatal("Username must be at most 100 bytes")
+	}
 	var count int64
 	database.Model(&db.User{}).Count(&count)
 
@@ -343,27 +375,12 @@ func runSetup(database *gorm.DB, username, password string, port int, dataDir st
 			return auth.GenerateRandomString(10)
 		})
 
-		// Retrieve or update password
-		var passSetting db.Setting
 		if password != "" {
-			if len(password) < 12 || len(password) > 72 {
-				log.Fatal("Password must be 12–72 bytes")
+			if err := db.ChangePassword(database, &user, password); err != nil {
+				log.Fatal(err)
 			}
-			hash, _ := auth.HashPassword(password)
-			user.PasswordHash = hash
-			database.Save(&user)
-			database.Save(&db.Setting{Key: "admin_password", Value: password})
-		} else if err := database.Where("key = ?", "admin_password").First(&passSetting).Error; err == nil && passSetting.Value != "" {
-			password = passSetting.Value
-		} else {
-			// Password was not saved in plaintext in earlier versions.
-			// Set a stable new one so user gets valid working credentials.
-			password = auth.GenerateRandomString(16)
-			hash, _ := auth.HashPassword(password)
-			user.PasswordHash = hash
-			database.Save(&user)
-			database.Save(&db.Setting{Key: "admin_password", Value: password})
 		}
+
 	} else {
 		// First install
 		if password != "" && (len(password) < 12 || len(password) > 72) {
@@ -379,14 +396,18 @@ func runSetup(database *gorm.DB, username, password string, port int, dataDir st
 			port = auth.GenerateRandomPort()
 		}
 
-		hash, _ := auth.HashPassword(password)
-		database.Create(&db.User{
+		hash, err := auth.HashPassword(password)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := database.Create(&db.User{
 			Username:     username,
 			PasswordHash: hash,
-		})
+		}).Error; err != nil {
+			log.Fatal(err)
+		}
 
 		database.Save(&db.Setting{Key: "panel_port", Value: fmt.Sprintf("%d", port)})
-		database.Save(&db.Setting{Key: "admin_password", Value: password})
 
 		webPath = getOrCreateSetting(database, "web_path", func() string {
 			return auth.GenerateRandomString(10)
@@ -396,10 +417,15 @@ func runSetup(database *gorm.DB, username, password string, port int, dataDir st
 	ip := detectServerIP()
 	panelURL := fmt.Sprintf("http://%s:%d/%s/", ip, port, webPath)
 
-	// Save credentials file for easy access by root
+	// Keep connection information for root, never the plaintext password.
 	credsPath := filepath.Join(dataDir, "credentials.txt")
-	credsContent := fmt.Sprintf("URL: %s\nUsername: %s\nPassword: %s\nPort: %d\nWeb Path: /%s\n", panelURL, username, password, port, webPath)
-	_ = os.WriteFile(credsPath, []byte(credsContent), 0600)
+	credsContent := fmt.Sprintf("URL: %s\nUsername: %s\nPort: %d\nWeb Path: /%s\nPassword: not stored; reset with spoof-panel --setup --setup-pass NEW_PASSWORD\n", panelURL, username, port, webPath)
+	if err := os.WriteFile(credsPath, []byte(credsContent), 0600); err != nil {
+		log.Fatal(err)
+	}
+	if password == "" {
+		password = "unchanged (not stored)"
+	}
 
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════════════════════════╗")

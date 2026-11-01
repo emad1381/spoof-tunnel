@@ -21,13 +21,17 @@ import (
 
 // PacketConn owns exactly one receive protocol and one raw send socket.
 type PacketConn struct {
-	cfg     Config
-	recv    *net.IPConn
-	send    int
-	sources [][4]byte
-	srcIdx  uint64
-	peerIP  [4]byte
-	mu      sync.Mutex
+	cfg       Config
+	recv      *net.IPConn
+	send      int
+	sources   [][4]byte
+	srcIdx    uint64
+	peerIP    [4]byte
+	peers     map[string]bool
+	recvBuf   []byte
+	mu        sync.Mutex
+	closed    bool
+	closeOnce sync.Once
 }
 
 func NewPacketConn(c Config) (*PacketConn, error) {
@@ -41,6 +45,11 @@ func NewPacketConn(c Config) (*PacketConn, error) {
 		return nil, err
 	}
 	if err = syscall.SetsockoptInt(fd, syscall.IPPROTO_IP, syscall.IP_HDRINCL, 1); err != nil {
+		recv.Close()
+		syscall.Close(fd)
+		return nil, err
+	}
+	if err := syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_SNDTIMEO, &syscall.Timeval{Sec: 1}); err != nil {
 		recv.Close()
 		syscall.Close(fd)
 		return nil, err
@@ -60,8 +69,20 @@ func NewPacketConn(c Config) (*PacketConn, error) {
 	var peer [4]byte
 	copy(peer[:], net.ParseIP(c.PeerIP).To4())
 
+	peers, err := c.PeerSources()
+	if err != nil {
+		recv.Close()
+		syscall.Close(fd)
+		return nil, err
+	}
+	allowed := make(map[string]bool, len(peers))
+	for _, ip := range peers {
+		allowed[ip.String()] = true
+	}
 	return &PacketConn{
 		cfg:     c,
+		peers:   allowed,
+		recvBuf: make([]byte, 65535),
 		recv:    recv,
 		send:    fd,
 		sources: sources,
@@ -87,6 +108,9 @@ func checksum(b []byte) uint16 {
 func (p *PacketConn) Send(payload []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		return net.ErrClosed
+	}
 	proto := Protocol(p.cfg.Send)
 	extra := 0
 	switch proto {
@@ -147,14 +171,13 @@ func (p *PacketConn) Send(payload []byte) error {
 }
 
 func (p *PacketConn) Receive() ([]byte, error) {
-	b := make([]byte, 65535)
-	expectedPeer := net.ParseIP(p.cfg.PeerSpoof)
+	b := p.recvBuf
 	for {
 		n, addr, err := p.recv.ReadFromIP(b)
 		if err != nil {
 			return nil, err
 		}
-		if !addr.IP.Equal(expectedPeer) {
+		if !p.peers[addr.IP.String()] {
 			continue
 		}
 		data := b[:n]
@@ -192,10 +215,13 @@ func (p *PacketConn) Receive() ([]byte, error) {
 }
 
 func (p *PacketConn) Close() {
-	p.recv.Close()
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	syscall.Close(p.send)
+	p.closeOnce.Do(func() {
+		_ = p.recv.Close()
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.closed = true
+		_ = syscall.Close(p.send)
+	})
 }
 
 func openTun(c Config) (*os.File, error) {
@@ -243,9 +269,7 @@ func Run(ctx context.Context, c Config) error {
 
 	var mu sync.Mutex
 	stats := Stats{Event: "spoof_stats"}
-	var challenge [16]byte
-	var challengeSent time.Time
-	var pending bool
+	pending := make(challenges)
 
 	emit := func() {
 		mu.Lock()
@@ -331,12 +355,9 @@ func Run(ctx context.Context, c Config) error {
 				}
 			case 3:
 				mu.Lock()
-				if pending && len(data) == 16 && string(data) == string(challenge[:]) {
+				if sent, ok := pending.accept(data, time.Now()); ok {
 					stats.LastPeer = time.Now().Unix()
-					if !challengeSent.IsZero() {
-						stats.RTTMs = float64(time.Since(challengeSent).Microseconds()) / 1000.0
-					}
-					pending = false
+					stats.RTTMs = float64(time.Since(sent).Microseconds()) / 1000
 				}
 				mu.Unlock()
 			}
@@ -359,12 +380,12 @@ func Run(ctx context.Context, c Config) error {
 			}
 			return err
 		case <-ticker.C:
-			mu.Lock()
+			var challenge [16]byte
 			_, err = rand.Read(challenge[:])
-			challengeSent = time.Now()
-			pending = true
-			payload := append([]byte(nil), challenge[:]...)
+			mu.Lock()
+			pending.add(challenge, time.Now())
 			mu.Unlock()
+			payload := challenge[:]
 			if err != nil {
 				return err
 			}

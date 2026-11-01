@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"os"
-	"path/filepath"
 	"sync"
 )
 
@@ -50,6 +50,8 @@ type TesterState struct {
 
 // Runner manages a tester execution.
 type Runner struct {
+	lifecycle   sync.Mutex
+	doneCh      chan struct{}
 	mu          sync.Mutex
 	state       TesterState
 	cancelCh    chan struct{}
@@ -57,10 +59,12 @@ type Runner struct {
 	tmpDir      string
 
 	// Live receiver state — accessible during test for real-time monitoring
-	recvMu      sync.RWMutex
-	received    map[uint32]int
-	recvCfgPkt  int     // packetCount for current run
-	recvCfgLoss float64 // maxPacketLoss for current run
+	recvMu        sync.RWMutex
+	received      map[uint32]int
+	receivedOrder []uint32
+	recvPassed    int
+	recvCfgPkt    int     // packetCount for current run
+	recvCfgLoss   float64 // maxPacketLoss for current run
 }
 
 // NewRunner creates a new tester runner.
@@ -72,12 +76,16 @@ func NewRunner() *Runner {
 
 // SetTmpDir sets the directory for temporary result files.
 func (r *Runner) SetTmpDir(dir string) {
+	r.lifecycle.Lock()
+	defer r.lifecycle.Unlock()
 	r.mu.Lock()
 	r.tmpDir = dir
 	r.mu.Unlock()
 }
 
 func (r *Runner) getTmpDir() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.tmpDir != "" {
 		return r.tmpDir
 	}
@@ -94,6 +102,7 @@ func (r *Runner) State() TesterState {
 	if s.Status == "running" && s.Mode == "receiver" {
 		r.recvMu.RLock()
 		s.RecvCount = len(r.received)
+		s.PassedCount = r.recvPassed
 		r.recvMu.RUnlock()
 	}
 
@@ -105,7 +114,9 @@ func (r *Runner) State() TesterState {
 
 // LiveResults returns the current received IPs during a running receiver test.
 // Returns results for all IPs that have received at least one packet so far.
-func (r *Runner) LiveResults() []TesterResult {
+func (r *Runner) LiveResults() []TesterResult { return r.liveResults(0) }
+
+func (r *Runner) liveResults(limit int) []TesterResult {
 	r.recvMu.RLock()
 	defer r.recvMu.RUnlock()
 
@@ -117,8 +128,13 @@ func (r *Runner) LiveResults() []TesterResult {
 	maxLoss := r.recvCfgLoss
 	ipBuf := make(net.IP, 4)
 
-	results := make([]TesterResult, 0, len(r.received))
-	for ipU32, count := range r.received {
+	size := len(r.receivedOrder)
+	if limit > 0 && size > limit {
+		size = limit
+	}
+	results := make([]TesterResult, 0, size)
+	for _, ipU32 := range r.receivedOrder[:size] {
+		count := r.received[ipU32]
 		binary.BigEndian.PutUint32(ipBuf, ipU32)
 		lossPct := float64(pktCount-count) / float64(pktCount) * 100.0
 		if lossPct < 0 {
@@ -137,7 +153,10 @@ func (r *Runner) LiveResults() []TesterResult {
 
 // Results reads results from the temp file (post-completion) or returns
 // live results if the receiver is still running.
-func (r *Runner) Results() ([]TesterResult, error) {
+func (r *Runner) Results() ([]TesterResult, error) { return r.ResultsLimit(0) }
+
+// ResultsLimit bounds polling payloads; explicit exports can request all results.
+func (r *Runner) ResultsLimit(limit int) ([]TesterResult, error) {
 	r.mu.Lock()
 	status := r.state.Status
 	mode := r.state.Mode
@@ -146,7 +165,7 @@ func (r *Runner) Results() ([]TesterResult, error) {
 
 	// If receiver is still running, return live results
 	if status == "running" && mode == "receiver" {
-		return r.LiveResults(), nil
+		return r.liveResults(limit), nil
 	}
 
 	if path == "" {
@@ -170,6 +189,9 @@ func (r *Runner) Results() ([]TesterResult, error) {
 			break
 		}
 		results = append(results, res)
+		if limit > 0 && len(results) >= limit {
+			break
+		}
 	}
 	return results, nil
 }
@@ -191,19 +213,57 @@ func (r *Runner) PassedIPs() ([]string, error) {
 
 // Stop cancels a running test.
 func (r *Runner) Stop() {
+	r.lifecycle.Lock()
+	defer r.lifecycle.Unlock()
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	done := r.doneCh
 	if r.cancelCh != nil {
 		close(r.cancelCh)
 		r.cancelCh = nil
 	}
-	if r.state.Status == "running" {
+	r.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+	r.mu.Lock()
+	if r.state.Status == "done" || r.state.Status == "running" {
 		r.state.Status = "idle"
 	}
+	r.mu.Unlock()
+}
+
+func validateConfig(cfg TesterConfig, ranges *IPRangeSet, sender bool) error {
+	if ranges == nil || ranges.Total() == 0 {
+		return fmt.Errorf("IP list is empty")
+	}
+	if cfg.Protocol != "tcp" && cfg.Protocol != "icmp" {
+		return fmt.Errorf("protocol must be tcp or icmp")
+	}
+	if cfg.PacketCount < 1 || cfg.PacketCount > 1000 || cfg.Timeout < 1 || cfg.Timeout > 3600 {
+		return fmt.Errorf("packet_count must be 1–1000 and timeout 1–3600 seconds")
+	}
+	if math.IsNaN(cfg.MaxPacketLoss) || cfg.MaxPacketLoss < 0 || cfg.MaxPacketLoss > 100 {
+		return fmt.Errorf("max_packet_loss must be 0–100")
+	}
+	if cfg.DstPort < 0 || cfg.DstPort > 65535 || (sender && cfg.Protocol == "tcp" && cfg.DstPort == 0) {
+		return fmt.Errorf("invalid destination port")
+	}
+	if sender {
+		ip := net.ParseIP(cfg.DstIP)
+		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.IPv4bcast) {
+			return fmt.Errorf("destination must be unicast IPv4")
+		}
+	}
+	return nil
 }
 
 // RunSender starts the sender in background using compact IPRangeSet.
 func (r *Runner) RunSender(cfg TesterConfig, ranges *IPRangeSet) error {
+	r.lifecycle.Lock()
+	defer r.lifecycle.Unlock()
+	if err := validateConfig(cfg, ranges, true); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	if r.state.Status == "running" {
 		r.mu.Unlock()
@@ -212,6 +272,8 @@ func (r *Runner) RunSender(cfg TesterConfig, ranges *IPRangeSet) error {
 	r.state = TesterState{Status: "running", Mode: "sender", TotalIPs: ranges.Total()}
 	r.cancelCh = make(chan struct{})
 	cancelCh := r.cancelCh
+	done := make(chan struct{})
+	r.doneCh = done
 	// Clean old results
 	if r.resultsFile != "" {
 		os.Remove(r.resultsFile)
@@ -220,6 +282,7 @@ func (r *Runner) RunSender(cfg TesterConfig, ranges *IPRangeSet) error {
 	r.mu.Unlock()
 
 	go func() {
+		defer close(done)
 		err := r.doSend(cfg, ranges, cancelCh)
 		r.mu.Lock()
 		if err != nil {
@@ -237,6 +300,11 @@ func (r *Runner) RunSender(cfg TesterConfig, ranges *IPRangeSet) error {
 
 // RunReceiver starts the receiver in background using compact IPRangeSet.
 func (r *Runner) RunReceiver(cfg TesterConfig, ranges *IPRangeSet) error {
+	r.lifecycle.Lock()
+	defer r.lifecycle.Unlock()
+	if err := validateConfig(cfg, ranges, false); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	if r.state.Status == "running" {
 		r.mu.Unlock()
@@ -245,6 +313,8 @@ func (r *Runner) RunReceiver(cfg TesterConfig, ranges *IPRangeSet) error {
 	r.state = TesterState{Status: "running", Mode: "receiver", TotalIPs: ranges.Total()}
 	r.cancelCh = make(chan struct{})
 	cancelCh := r.cancelCh
+	done := make(chan struct{})
+	r.doneCh = done
 	// Clean old results
 	if r.resultsFile != "" {
 		os.Remove(r.resultsFile)
@@ -253,6 +323,8 @@ func (r *Runner) RunReceiver(cfg TesterConfig, ranges *IPRangeSet) error {
 	// Initialize live receiver state
 	r.recvMu.Lock()
 	r.received = make(map[uint32]int)
+	r.receivedOrder = nil
+	r.recvPassed = 0
 	pktCount := cfg.PacketCount
 	if pktCount < 1 {
 		pktCount = 10
@@ -264,6 +336,7 @@ func (r *Runner) RunReceiver(cfg TesterConfig, ranges *IPRangeSet) error {
 	r.mu.Unlock()
 
 	go func() {
+		defer close(done)
 		err := r.doReceive(cfg, ranges, cancelCh)
 		r.mu.Lock()
 		if err != nil {
@@ -296,10 +369,11 @@ func (r *Runner) flushInterimResults(packetCount int, maxLoss float64) {
 	r.recvMu.RUnlock()
 
 	tmpDir := r.getTmpDir()
-	os.MkdirAll(tmpDir, 0755)
-	stablePath := filepath.Join(tmpDir, "tester-results.jsonl")
-
-	f, err := os.Create(stablePath)
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
+		log.Printf("[tester] result directory: %v", err)
+		return
+	}
+	f, err := os.CreateTemp(tmpDir, "spoof-tester-*.jsonl")
 	if err != nil {
 		log.Printf("[tester-receiver] flush error: %v", err)
 		return
@@ -336,10 +410,14 @@ func (r *Runner) flushInterimResults(packetCount int, maxLoss float64) {
 	f.Close()
 
 	r.mu.Lock()
-	r.resultsFile = stablePath
+	oldPath := r.resultsFile
+	r.resultsFile = f.Name()
 	r.state.PassedCount = passedCount
 	r.state.RecvCount = len(snapshot)
 	r.mu.Unlock()
+	if oldPath != "" {
+		_ = os.Remove(oldPath)
+	}
 
 	log.Printf("[tester-receiver] interim flush -- %d IPs received, %d passed", len(snapshot), passedCount)
 }

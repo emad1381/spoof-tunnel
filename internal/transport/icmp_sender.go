@@ -5,12 +5,14 @@ import "C"
 import (
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
 
 // ICMPSender sends spoofed ICMP Echo Request packets via Rust.
 type ICMPSender struct {
+	mu     sync.Mutex
 	handle C.SpoofHandle
 	closed atomic.Bool
 }
@@ -50,6 +52,14 @@ func NewICMPSender(cfg SenderConfig) (*ICMPSender, error) {
 }
 
 func (s *ICMPSender) Send(payload []byte, dstIP net.IP, _ uint16) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(payload) > 65507 {
+		return ErrPacketTooLarge
+	}
+	if len(payload) == 0 {
+		return ErrInvalidPacket
+	}
 	if s.closed.Load() {
 		return ErrConnectionClosed
 	}
@@ -71,10 +81,11 @@ func (s *ICMPSender) Send(payload []byte, dstIP net.IP, _ uint16) error {
 }
 
 func (s *ICMPSender) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed.Swap(true) {
 		return nil
 	}
 	C.spoof_icmp_sender_close(s.handle)
 	return nil
 }
-

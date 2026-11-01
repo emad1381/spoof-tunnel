@@ -40,8 +40,6 @@ type Local struct {
 	down     atomic.Uint64
 	upPkts   atomic.Uint64
 	downPkts atomic.Uint64
-
-	icmpSuppressed bool
 }
 
 func NewLocal(cfg LocalConfig) (*Local, error) {
@@ -52,25 +50,12 @@ func NewLocal(cfg LocalConfig) (*Local, error) {
 		cfg.RecvTransport = transport.TransportUDP
 	}
 
-	icmpSuppressed := false
-	if cfg.RecvTransport == transport.TransportICMP || cfg.RecvTransport == transport.TransportICMPv6 {
-		if suppressICMPEchoReply() {
-			icmpSuppressed = true
-		}
-	}
-
 	addr, err := net.ResolveUDPAddr("udp4", cfg.ListenAddr)
 	if err != nil {
-		if icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 		return nil, err
 	}
 	udpConn, err := net.ListenUDP("udp4", addr)
 	if err != nil {
-		if icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 		return nil, err
 	}
 
@@ -87,9 +72,6 @@ func NewLocal(cfg LocalConfig) (*Local, error) {
 	sender, err := transport.NewSender(cfg.SendTransport, senderCfg)
 	if err != nil {
 		udpConn.Close()
-		if icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 		return nil, err
 	}
 
@@ -103,19 +85,15 @@ func NewLocal(cfg LocalConfig) (*Local, error) {
 	if err != nil {
 		udpConn.Close()
 		sender.Close()
-		if icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 		return nil, err
 	}
 
 	return &Local{
-		cfg:            cfg,
-		done:           make(chan struct{}),
-		udpConn:        udpConn,
-		sender:         sender,
-		recver:         recver,
-		icmpSuppressed: icmpSuppressed,
+		cfg:     cfg,
+		done:    make(chan struct{}),
+		udpConn: udpConn,
+		sender:  sender,
+		recver:  recver,
 	}, nil
 }
 
@@ -189,9 +167,6 @@ func (l *Local) Close() {
 		l.udpConn.Close()
 		l.sender.Close()
 		l.recver.Close()
-		if l.icmpSuppressed {
-			restoreICMPEchoReply()
-		}
 	})
 }
 

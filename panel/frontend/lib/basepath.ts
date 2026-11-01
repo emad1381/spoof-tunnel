@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 const KNOWN_ROOTS = new Set(["dashboard", "login", "_next", "api"]);
 
@@ -21,8 +21,8 @@ export function getBasePath(): string {
  * (SSR-safe) and the real prefix after mount. Never call this inside an
  * effect or a callback — use getBasePath() there.
  */
+const subscribe = () => () => {};
+const serverSnapshot = () => "";
 export function useBasePath(): string {
-  const [base, setBase] = useState("");
-  useEffect(() => setBase(getBasePath()), []);
-  return base;
+  return useSyncExternalStore(subscribe, getBasePath, serverSnapshot);
 }

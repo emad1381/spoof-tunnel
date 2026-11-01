@@ -4,7 +4,7 @@
 
 `spoof-panel` serves the embedded frontend and JSON API. SQLite stores administrators, tunnel definitions and a persistent JWT secret. The manager writes private JSON configurations and spawns `spoof-l3`. It waits for exit before restarting; enabled instances start with the panel.
 
-`spoof-l3` exclusively creates a non-persistent Linux TUN, assigns an IPv4 CIDR/MTU and transports each IP packet inside an authenticated datagram. It uses a raw receiver bound to the real local address and an IPv4 raw sender. It filters the configured peer spoof source and carrier identifier/port. Closing the process releases the TUN; an existing TUN is not overwritten.
+`spoof-l3` exclusively creates a non-persistent Linux TUN, assigns an IPv4 CIDR/MTU and transports each IP packet inside an authenticated datagram. It uses a raw receiver bound to the real local address and an IPv4 raw sender. It filters an explicit allowlist of peer spoof sources and the carrier identifier/port. `peer_spoof` remains the backward-compatible single-source field; `peer_spoofs` is the optional list for a rotating peer. The panel stores this list as newline-separated `peer_spoof_ip_list`. Configure the list reciprocally on both hosts. Closing the process releases the TUN; an existing TUN is not overwritten.
 
 ```mermaid
 flowchart LR
@@ -47,10 +47,16 @@ Direction keys are HMAC-SHA256(PSK, `spoof-l3-v1/local-to-remote` or `spoof-l3-v
 
 Timestamps older than 120 seconds or more than 30 seconds in the future are rejected. A 1024-sequence replay window is tracked per authenticated session. State persists beyond the accepted timestamp's validity period. At most 64 live receive sessions are admitted; saturation fails closed. Direction separation rejects reflection. Authentication occurs before replay state changes.
 
-Every three seconds, each end sends a fresh random 16-byte challenge. Only the matching authenticated response marks a peer reachable. After 15 seconds without a valid response the dashboard reports disconnected. This tests bidirectional engine reachability, **not application health or Internet access**. Counters measure accepted inner bytes, not delivery acknowledgments.
+Every three seconds, each end sends a fresh random 16-byte challenge. Outstanding probes remain valid for 15 seconds; the next probe does not invalidate a delayed response. A response can be accepted only once. Only the matching authenticated response marks a peer reachable. After 15 seconds without a valid response the dashboard reports disconnected. This tests bidirectional engine reachability, **not application health or Internet access**. Counters measure accepted inner bytes, not delivery acknowledgments.
 
 ## Routing and limits
 
 Only the connected TUN subnet is configured. No default route, global forwarding, NAT or host firewall rewrite occurs. Links need non-overlapping subnets and unique interfaces. Real endpoints must stay outside the TUN subnet. MTU is 576–1300; lower it for paths with more overhead.
 
 Datagrams have no custom loss recovery. Inner TCP supplies TCP reliability. No FEC, custom congestion control, compression, IPv6, carrier negotiation or automatic failover is implemented. The frame design has not received an independent cryptographic audit.
+
+## Process and forwarding lifecycle
+
+TCP entry forwarders capture their listener at start, serialize start/stop, cancel pending dialing and join their workers before restart. A normal TCP EOF half-closes only the outgoing direction; the reverse direction remains available for the response. Finished connections retain no stop-watcher goroutine. The diagnostic runner joins a stopped worker before starting another generation.
+
+The API serializes configuration mutations with start/stop, rejects overlapping TUN networks and duplicate interface names, and returns HTTP 409 for stale configuration snapshots. IP-pool saves return the updated instance/version so the editor can retain unsaved form values without overwriting the saved pool.

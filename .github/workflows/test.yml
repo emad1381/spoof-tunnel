@@ -26,14 +26,14 @@ jobs:
 
       - name: Test
         working-directory: rust
-        run: cargo test
+        run: cargo test -p spoof-transport
 
   test-go:
     needs: test-rust
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ['1.22', '1.23']
+        go-version: ['1.26.2']
     steps:
       - uses: actions/checkout@v4
 
@@ -47,7 +47,7 @@ jobs:
 
       - name: Build Rust library
         working-directory: rust
-        run: cargo build --release
+        run: cargo build --release -p spoof-transport
 
       - name: Set up Go ${{ matrix.go-version }}
         uses: actions/setup-go@v5
@@ -56,6 +56,9 @@ jobs:
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Test
+        run: go test -race ./cmd/... ./internal/...
 
       - name: Vet
         env:
@@ -66,3 +69,6 @@ jobs:
         env:
           CGO_ENABLED: 1
         run: go build -o spoof ./cmd/spoof/
+
+      - name: Native socket lifecycle regressions
+        run: sudo env "PATH=$PATH" "GOMODCACHE=$(go env GOMODCACHE)" go test -race ./internal/transport

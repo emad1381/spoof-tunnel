@@ -5,12 +5,14 @@ import "C"
 import (
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
 
 // ICMPv6Sender sends spoofed ICMPv6 Echo Request packets (proto 58) over IPv4.
 type ICMPv6Sender struct {
+	mu     sync.Mutex
 	handle C.SpoofHandle
 	closed atomic.Bool
 }
@@ -49,6 +51,14 @@ func NewICMPv6Sender(cfg SenderConfig) (*ICMPv6Sender, error) {
 }
 
 func (s *ICMPv6Sender) Send(payload []byte, dstIP net.IP, _ uint16) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(payload) > 65507 {
+		return ErrPacketTooLarge
+	}
+	if len(payload) == 0 {
+		return ErrInvalidPacket
+	}
 	if s.closed.Load() {
 		return ErrConnectionClosed
 	}
@@ -70,6 +80,8 @@ func (s *ICMPv6Sender) Send(payload []byte, dstIP net.IP, _ uint16) error {
 }
 
 func (s *ICMPv6Sender) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed.Swap(true) {
 		return nil
 	}

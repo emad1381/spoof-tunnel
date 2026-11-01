@@ -108,7 +108,7 @@ func ParseIPRangesFromReader(r io.Reader) (*IPRangeSet, error) {
 	sort.Slice(ranges, func(i, j int) bool { return ranges[i].Start < ranges[j].Start })
 	merged := make([]IPRange, 0, len(ranges))
 	for _, r := range ranges {
-		if len(merged) > 0 && r.Start <= merged[len(merged)-1].End+1 {
+		if len(merged) > 0 && uint64(r.Start) <= uint64(merged[len(merged)-1].End)+1 {
 			if r.End > merged[len(merged)-1].End {
 				merged[len(merged)-1].End = r.End
 			}
@@ -144,9 +144,9 @@ func (s *IPRangeSet) Total() int64 {
 func (s *IPRangeSet) IterateIPs(fn func(ip net.IP) bool) {
 	ipBuf := make(net.IP, 4)
 	for _, r := range s.ranges {
-		for v := r.Start; v <= r.End; v++ {
+		for v := r.Start; ; v++ {
 			binary.BigEndian.PutUint32(ipBuf, v)
-			if !fn(ipBuf) {
+			if !fn(ipBuf) || v == r.End {
 				return
 			}
 		}
@@ -264,10 +264,13 @@ func parseRange(r string) ([]net.IP, error) {
 		return nil, fmt.Errorf("start IP > end IP in range: %s", r)
 	}
 	ips := make([]net.IP, 0, end-start+1)
-	for i := start; i <= end; i++ {
+	for i := start; ; i++ {
 		ip := make(net.IP, 4)
 		binary.BigEndian.PutUint32(ip, i)
 		ips = append(ips, ip)
+		if i == end {
+			break
+		}
 	}
 	return ips, nil
 }

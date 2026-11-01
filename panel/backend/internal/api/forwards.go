@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/ParsaKSH/spoof-tunnel/panel/internal/db"
 	"github.com/gin-gonic/gin"
@@ -50,6 +52,8 @@ type createForwardRequest struct {
 
 // POST /instances/:id/forwards
 func (s *Server) handleCreateForward(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	id, err := parseID(c)
 	if err != nil {
 		return
@@ -57,6 +61,11 @@ func (s *Server) handleCreateForward(c *gin.Context) {
 	var req createForwardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if utf8.RuneCountInString(req.Name) > 100 {
+		c.JSON(400, gin.H{"error": "name must be at most 100 characters"})
 		return
 	}
 	if req.Protocol == "" {
@@ -96,21 +105,28 @@ func (s *Server) handleCreateForward(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	for _, t := range all {
-		for _, p := range []int{t.RemotePort, t.RecvPort, t.ListenPort, t.ClientPort} {
-			if p != 0 && p == req.ListenPort {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "listen_port collides with a tunnel carrier port"})
-				return
-			}
+	for _, tunnel := range all {
+		if tunnel.RecvTransport != "tcp" {
+			continue
+		}
+		port := tunnel.RecvPort
+		if tunnel.Mode == "remote" {
+			port = tunnel.ListenPort
+		}
+		if port == req.ListenPort {
+			c.JSON(400, gin.H{"error": "listen_port collides with a local TCP carrier port"})
+			return
 		}
 	}
+
 	// One listen port per host: two enabled rules binding the same
 	// port cannot both listen, regardless of which tunnel they belong
 	// to. Disabled rules do not bind, so they must not block a new
 	// enabled rule on the same port.
+	enabled := req.Enabled == nil || *req.Enabled
 	var clash db.ForwardRule
 	err = s.db.Where("listen_port = ? AND enabled = ?", req.ListenPort, true).First(&clash).Error
-	if err == nil {
+	if err == nil && enabled {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "listen_port is already used by another forward rule"})
 		return
 	}
@@ -118,9 +134,10 @@ func (s *Server) handleCreateForward(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
+	var port db.Setting
+	if s.db.Where("key = ?", "panel_port").First(&port).Error == nil && port.Value == strconv.Itoa(req.ListenPort) {
+		c.JSON(400, gin.H{"error": "listen_port collides with the panel port"})
+		return
 	}
 	rule := db.ForwardRule{
 		InstanceID: id,
@@ -156,6 +173,8 @@ func (s *Server) handleCreateForward(c *gin.Context) {
 
 // DELETE /instances/:id/forwards/:ruleID
 func (s *Server) handleDeleteForward(c *gin.Context) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	id, err := parseID(c)
 	if err != nil {
 		return

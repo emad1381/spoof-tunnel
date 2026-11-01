@@ -10,10 +10,11 @@ import (
 
 // ICMPv6Receiver listens for ICMPv6 Echo Request packets (proto 58) over IPv4.
 type ICMPv6Receiver struct {
-	handle C.SpoofHandle
-	closed atomic.Bool
-	pktCh  chan receivedPacket
-	doneCh chan struct{}
+	handle   C.SpoofHandle
+	closed   atomic.Bool
+	pktCh    chan receivedPacket
+	doneCh   chan struct{}
+	readDone chan struct{}
 }
 
 func NewICMPv6Receiver(cfg ReceiverConfig) (*ICMPv6Receiver, error) {
@@ -31,15 +32,19 @@ func NewICMPv6Receiver(cfg ReceiverConfig) (*ICMPv6Receiver, error) {
 	}
 
 	r := &ICMPv6Receiver{
-		handle: h,
-		pktCh:  make(chan receivedPacket, 256),
-		doneCh: make(chan struct{}),
+		handle:   h,
+		pktCh:    make(chan receivedPacket, 256),
+		doneCh:   make(chan struct{}),
+		readDone: make(chan struct{}),
 	}
 	go r.readLoop()
 	return r, nil
 }
 
 func (r *ICMPv6Receiver) readLoop() {
+	defer close(r.readDone)
+	defer close(r.pktCh)
+	defer C.spoof_icmpv6_receiver_close(r.handle)
 	buf := make([]byte, 65536)
 	var srcIPBuf [4]byte
 
@@ -96,11 +101,9 @@ func (r *ICMPv6Receiver) Receive() ([]byte, net.IP, uint16, error) {
 }
 
 func (r *ICMPv6Receiver) Close() error {
-	if r.closed.Swap(true) {
-		return nil
+	if !r.closed.Swap(true) {
+		close(r.doneCh)
 	}
-	close(r.doneCh)
-	C.spoof_icmpv6_receiver_close(r.handle)
-	close(r.pktCh)
+	<-r.readDone
 	return nil
 }
