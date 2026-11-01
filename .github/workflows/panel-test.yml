@@ -14,6 +14,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-v2-${{ runner.os }}-validation-${{ hashFiles('go.mod', 'go.sum', 'panel/backend/go.mod', 'panel/backend/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-v2-${{ runner.os }}-validation-${{ hashFiles('go.mod', 'go.sum', 'panel/backend/go.mod', 'panel/backend/go.sum') }}-
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -33,6 +42,14 @@ jobs:
       - run: python3 scripts/smoke_panel.py
         env:
           SPOOF_PANEL_BINARY: dist/spoof-panel
+      - name: Share the tested frontend with release jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-web
+          path: panel/frontend/out/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 1
       - uses: actions/upload-artifact@v4
         with:
           name: validated-linux-amd64

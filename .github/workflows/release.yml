@@ -19,12 +19,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+          cache: false
+      - uses: actions/cache@v4
         with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: panel/frontend/package-lock.json
-      - run: bash scripts/build.sh
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-v2-${{ runner.os }}-release-${{ matrix.arch }}-${{ hashFiles('go.mod', 'go.sum', 'panel/backend/go.mod', 'panel/backend/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-v2-${{ runner.os }}-release-${{ matrix.arch }}-${{ hashFiles('go.mod', 'go.sum', 'panel/backend/go.mod', 'panel/backend/go.sum') }}-
+            go-v2-${{ runner.os }}-validation-${{ hashFiles('go.mod', 'go.sum', 'panel/backend/go.mod', 'panel/backend/go.sum') }}-
+      - name: Download the frontend that passed validation
+        uses: actions/download-artifact@v4
+        with:
+          name: validated-web
+          path: panel/backend/cmd/panel/web
+      - name: Compile the target binaries and package
+        run: |
+          test -f panel/backend/cmd/panel/web/index.html
+          test -d panel/backend/cmd/panel/web/_next
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/ParsaKSH/spoof-tunnel/internal/l3.Version=$SPOOF_VERSION" -o dist/spoof-l3 ./cmd/spoof-l3
+          (cd panel/backend && CGO_ENABLED=0 go build -trimpath -ldflags "-X main.panelVersion=$SPOOF_VERSION" -o ../../dist/spoof-panel ./cmd/panel)
+          SPOOF_ARCH="$GOARCH" python3 scripts/package.py
         env:
           GOARCH: ${{ matrix.arch }}
           SPOOF_VERSION: ${{ github.ref_name }}

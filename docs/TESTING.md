@@ -40,3 +40,7 @@ Optional XDP requires building the eBPF program and loader with its separate too
 The active validation workflow is `.github/workflows/panel-test.yml`; legacy tests are in `test.yml`. Tagged releases run validation before creating amd64 and arm64 packages through `scripts/build.sh` and `scripts/package.py`. Cross-compiled arm64 binaries are packaged rather than executed on amd64 runners. Lint, TypeScript checks and production build errors fail validation.
 
 These checks establish reproducible behavior in the tested environments. They do not establish provider spoof acceptance, censorship resistance, sustained production throughput, every browser/device, an independent cryptographic audit, or infinite-duration stability. Test the actual VPS pair before relying on it.
+
+## CI cache and frontend reuse
+
+npm's download cache is restored using the frontend lockfile. Go module and compiled-build caches include both module dependency files; validation and each release architecture have separate keys, with a commit suffix so successful runs save updated incremental caches. Release jobs download the exact static frontend artifact that passed validation instead of reinstalling Node dependencies and rebuilding the same UI twice. A missing frontend artifact fails packaging. Cache misses always rebuild normally; network integration tests run on every validation and are not cached.
