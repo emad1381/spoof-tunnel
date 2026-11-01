@@ -69,6 +69,7 @@ const fa = (n: number) => n.toLocaleString("fa-IR");
 
 export default function Dashboard() {
   const [dash, setDash] = useState<Dash | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [sys, setSys] = useState<System | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<number | null>(null);
@@ -94,6 +95,7 @@ export default function Dashboard() {
  setUpdated(new Date().toLocaleTimeString("fa-IR"));
       if (lastPollRef.current === key) return;
       lastPollRef.current = key;
+      setSelectedId(current => current !== null && !(d.instances ?? []).some(instance => instance.id === current) ? null : current);
       setDash(d);
       setSys(s);
       setError("");
@@ -132,7 +134,12 @@ export default function Dashboard() {
   }
 
   const instances = dash?.instances ?? [];
-  const primary = instances.find((i) => i.engine === "tun" && i.status === "running") || instances[0];
+  const primary = instances.find(i => i.id === selectedId) || instances.find(i => i.engine === "tun" && i.status === "running") || instances[0];
+  const primaryIndex = instances.findIndex(i => i.id === primary?.id);
+  function selectNeighbour(direction: number) {
+    if (instances.length < 2) return;
+    setSelectedId(instances[(primaryIndex + direction + instances.length) % instances.length].id);
+  }
   const primaryTelemetry = primary?.telemetry;
   const totalTraffic = instances.reduce((sum, instance) => ({ tx: sum.tx + (instance.telemetry?.tx_bytes || 0), rx: sum.rx + (instance.telemetry?.rx_bytes || 0) }), { tx: 0, rx: 0 });
   const isPeerConnected = primary?.engine === "tun" && !!primaryTelemetry?.peer_connected;
@@ -169,16 +176,24 @@ export default function Dashboard() {
       {/* Top Bento Showcase Grid */}
       <div className="grid-2-1">
         {/* Bento Hero Card */}
-        <section className="panel bento-hero">
+        <section className="panel bento-hero" aria-labelledby="link-health-title">
           <div className="section-head">
             <div>
-              <span className="eyebrow" style={{ color: "var(--accent-cyan)" }}>PRIMARY LINK HEALTH</span>
-              <h2>{primary ? primary.name : "وضعیت پیوند شبکه"}</h2>
+              <span className="eyebrow" style={{ color: "var(--accent-cyan)" }}>SELECTED LINK HEALTH</span>
+              <h2 id="link-health-title">{primary ? primary.name : "وضعیت پیوند شبکه"}</h2>
             </div>
             <span className={`pill ${isPeerConnected ? "ok" : primary?.status === "running" ? "warn" : "muted"}`}>
               {isPeerConnected ? "پاسخ معتبر دریافت شد" : primary?.status === "running" ? "در انتظار پاسخ طرف مقابل" : "پیوند خاموش"}
             </span>
           </div>
+
+          {instances.length > 0 && (
+            <div role="group" aria-label="انتخاب اتصال برای نمایش وضعیت" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+              <button type="button" className="btn btn-ghost btn-sm" aria-label="اتصال قبلی" disabled={instances.length < 2} onClick={() => selectNeighbour(-1)}>→ قبلی</button>
+              <span className="hint" role="status" aria-live="polite">اتصال {fa(primaryIndex + 1)} از {fa(instances.length)}</span>
+              <button type="button" className="btn btn-ghost btn-sm" aria-label="اتصال بعدی" disabled={instances.length < 2} onClick={() => selectNeighbour(1)}>بعدی ←</button>
+            </div>
+          )}
 
           <div style={{ display: "flex", alignItems: "center", gap: 24, padding: "12px 0", flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>

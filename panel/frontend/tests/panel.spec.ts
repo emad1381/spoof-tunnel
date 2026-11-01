@@ -161,3 +161,30 @@ test('Persian Vazirmatn loads locally and is inherited by form controls', async 
  for (const family of fonts.elements) expect(family).toContain('Vazirmatn');
  expect(externalFonts).toEqual([]);
 });
+
+test('dashboard cycles peer health by ID and retains selection through refresh and reorder', async ({ page }) => {
+ await mock(page);
+ let ids = [1, 2, 3];
+ await page.route('**/api/dashboard', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ total: ids.length, running_count: ids.length, stopped_count: 0, error_count: 0, instances: ids.map(id => ({ id, name: 'Peer ' + id, mode: 'local', engine: 'tun', status: 'running', uptime: 1, telemetry: { peer_connected: true, rtt_ms: id * 10, tx_packets: id * 100, rx_packets: 0, drops: id } })) }) }));
+ await page.goto(prefix + '/dashboard/');
+ const card = page.getByRole('region', { name: 'Peer 1' });
+ await expect(card).toContainText('۱۰ ms');
+ await page.getByRole('button', { name: 'اتصال بعدی', exact: true }).click();
+ await expect(page.getByRole('region', { name: 'Peer 2' })).toContainText('۲۰ ms');
+ ids = [3, 2, 1];
+ await page.getByRole('button', { name: 'به‌روزرسانی', exact: true }).click();
+ await expect(page.getByRole('region', { name: 'Peer 2' })).toContainText('اتصال ۲ از ۳');
+ await page.getByRole('button', { name: 'اتصال بعدی', exact: true }).click();
+ await expect(page.getByRole('region', { name: 'Peer 1' })).toBeVisible();
+ await page.getByRole('button', { name: 'اتصال بعدی', exact: true }).click();
+ await expect(page.getByRole('region', { name: 'Peer 3' })).toBeVisible();
+ ids = [1];
+ await page.getByRole('button', { name: 'به‌روزرسانی', exact: true }).click();
+ await expect(page.getByRole('region', { name: 'Peer 1' })).toBeVisible();
+ await expect(page.getByRole('button', { name: 'اتصال بعدی', exact: true })).toBeDisabled();
+ await expect(page.getByRole('button', { name: 'اتصال قبلی', exact: true })).toBeDisabled();
+ ids = [];
+ await page.getByRole('button', { name: 'به‌روزرسانی', exact: true }).click();
+ await expect(page.getByRole('region', { name: 'وضعیت پیوند شبکه' })).toBeVisible();
+ await expect(page.getByRole('button', { name: 'اتصال بعدی', exact: true })).toHaveCount(0);
+});

@@ -46,10 +46,10 @@ curl -fsSL https://raw.githubusercontent.com/emad1381/spoof-tunnel/main/install.
 - نسخه هنگام بیلد داخل پنل و موتور ثبت می‌شود؛ برچسب بالای پنل نسخهٔ باینری در حال اجراست.
 - پنل HTTP ارائه می‌کند؛ برای مدیریت از راه دور، HTTPS reverse proxy یا SSH forwarding تنظیم کنید.
 
-برای نصب مشخصاً نسخهٔ **v0.3.1**:
+برای نصب مشخصاً نسخهٔ **v0.3.2**:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/emad1381/spoof-tunnel/v0.3.1/install.sh | SPOOF_RELEASE=v0.3.1 bash
+curl -fsSL https://raw.githubusercontent.com/emad1381/spoof-tunnel/v0.3.2/install.sh | SPOOF_RELEASE=v0.3.2 bash
 ```
 
 خروجی انتشار شامل `spoof-tunnel-linux-amd64.tar.gz`، نسخهٔ `arm64` و فایل checksum آرشیوها یعنی `SHA256SUMS` است. روی VPS به Go، Node.js یا Rust نیاز ندارید.
@@ -107,6 +107,8 @@ ping -c 3 10.77.0.2
 
 </details>
 
+کارت وضعیت داشبورد دکمه‌های قبلی/بعدی و شمارندهٔ اتصال دارد. انتخاب بر اساس شناسهٔ اتصال هنگام به‌روزرسانی و تغییر ترتیب حفظ می‌شود؛ با حذف آن، یک اتصال موجود نمایش داده می‌شود.
+
 ## عیب‌یابی
 
 | نشانه | بررسی اولیه |
@@ -137,13 +139,13 @@ journalctl -u spoof-panel -n 100 --no-pager
 برای بیلد از Linux/WSL، نسخهٔ Go مشخص‌شده در [go.mod](go.mod)، Node.js 24 و npm استفاده کنید:
 
 ```sh
-SPOOF_VERSION=v0.3.1 bash scripts/build.sh
+SPOOF_VERSION=v0.3.2 bash scripts/build.sh
 sudo bash dist/install.sh
 ```
 
 بیلد، رابط را به فایل‌های نهایی تبدیل و داخل `spoof-panel` قرار می‌دهد؛ موتور `spoof-l3` را می‌سازد و هر دو را همراه نصب‌کننده و مستندات بسته‌بندی می‌کند. GitHub Actions پیش از تولید بسته‌های هر دو معماری، اعتبارسنجی را اجرا می‌کند.
 
-آزمون‌ها شامل **۲۵ ترکیب مرتب رفت/برگشت حامل**، **پنج حالت گردش مبدأ**، heartbeat با RTT بالاتر از سه ثانیه و **یک ایران و سه خارج هم‌زمان روی هر پنج حامل** با انتقال هم‌زمان TCP/UDP و توقف/راه‌اندازی مستقل هستند. **۱۳ سناریوی مرورگر** رفتار پنل و فونت محلی فارسی را بررسی می‌کنند؛ race testهای Go و آزمون HTTP/SQLite واقعی بک‌اند را پوشش می‌دهند. جزئیات در [راهنمای آزمون](docs/TESTING.md)، [معماری](docs/ARCHITECTURE.md)، [عملیات](docs/OPERATIONS.md) و [گزارش اصلاحات](docs/FIXES-2026-11-01.md) آمده است.
+آزمون‌ها شامل **۲۵ ترکیب مرتب رفت/برگشت حامل**، **پنج حالت گردش مبدأ**، heartbeat با RTT بالاتر از سه ثانیه و **یک ایران و سه خارج هم‌زمان روی هر پنج حامل** با انتقال هم‌زمان TCP/UDP و توقف/راه‌اندازی مستقل هستند. **۱۴ سناریوی مرورگر** رفتار پنل و فونت محلی فارسی را بررسی می‌کنند؛ race testهای Go و آزمون HTTP/SQLite واقعی بک‌اند را پوشش می‌دهند. جزئیات در [راهنمای آزمون](docs/TESTING.md)، [معماری](docs/ARCHITECTURE.md)، [عملیات](docs/OPERATIONS.md) و [گزارش اصلاحات](docs/FIXES-2026-11-01.md) آمده است.
 
 ## محدوده و مجوز
 
